@@ -37,8 +37,14 @@ async Task Respond(HttpListenerContext ctx){
  }catch(OperationCanceledException){}catch(HttpListenerException){}catch(IOException){}finally{ctx.Response.Close();}
 }
 var handlers=new List<Task>();var server=Task.Run(async()=>{try{while(!stop.IsCancellationRequested){var ctx=await listener.GetContextAsync().WaitAsync(stop.Token);handlers.Add(Respond(ctx));}}catch(OperationCanceledException){}catch(HttpListenerException){}catch(ObjectDisposedException){}});
-monitor.Start();await Until(()=>monitor.Traffic?.Down==8192&&monitor.Latency?.Millis==73);
-Check(monitor.Traffic!.Up==2048&&unauthorized==0&&delayRequests==1,"Wrong live readings or authorization");
-monitor.Dispose();await Task.Delay(200);Check(monitor.Traffic==null&&monitor.Latency==null,"Stale readings after disconnect");
-stop.Cancel();listener.Stop();await server;await Task.WhenAll(handlers);
+try{
+ monitor.Start();await Until(()=>monitor.Traffic?.Down==8192&&monitor.Latency?.Millis==73);
+ Check(monitor.Traffic!.Up==2048&&unauthorized==0&&delayRequests==1,"Wrong live readings or authorization");
+ monitor.Dispose();await Task.Delay(200);Check(monitor.Traffic==null&&monitor.Latency==null,"Stale readings after disconnect");
+}finally{
+ monitor.Dispose();stop.Cancel();
+ // Windows responses use the listener's native request queue when closing.
+ // Drain the accept loop and every response before disposing that queue.
+ try{await server;await Task.WhenAll(handlers);}finally{listener.Stop();}
+}
 Console.WriteLine("PASS: loopback auth, fresh secrets, streaming upload/download, proxy latency, cancellation and reset");
