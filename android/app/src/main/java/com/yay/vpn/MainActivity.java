@@ -111,7 +111,23 @@ public final class MainActivity extends Activity {
           }).show();
     }
     private String expiry(){return DateFormat.getDateInstance(DateFormat.MEDIUM,Locale.forLanguageTag(language)).format(new Date(account.optLong("expires_at")*1000));}
-    private String errorMessage(Exception e){if(e instanceof Api.Failure){int status=((Api.Failure)e).status;if(status==409)return t("Device limit reached. Contact support.","已达到设备上限，请联系管理员。","Batas perangkat tercapai. Hubungi admin.");if(status==401)return t("Incorrect credentials or expired session.","账号密码错误或登录已过期。","Akun salah atau sesi kedaluwarsa.");if(status==403)return t("Access expired or paused. Contact support.","访问已过期或暂停，请联系管理员。","Akses kedaluwarsa atau dijeda. Hubungi admin.");if(status==429)return t("Too many attempts. Wait five minutes.","尝试过多，请等待五分钟。","Terlalu banyak percobaan. Tunggu lima menit.");}return t("Could not reach Yay VPN. Check your connection and try again.","无法连接 Yay VPN，请检查网络后重试。","Tidak dapat menghubungi Yay VPN. Periksa koneksi dan coba lagi.");}
+    private String errorMessage(Exception e){
+        if(e instanceof Api.Failure){
+            int status=((Api.Failure)e).status;
+            if(status==409)return t("Device limit reached. Contact support.","已达到设备上限，请联系管理员。","Batas perangkat tercapai. Hubungi admin.");
+            if(status==401)return t("Incorrect credentials or expired session.","账号密码错误或登录已过期。","Akun salah atau sesi kedaluwarsa.");
+            if(status==403)return t("Access expired or paused. Contact support.","访问已过期或暂停，请联系管理员。","Akses kedaluwarsa atau dijeda. Hubungi admin.");
+            if(status==429)return t("Too many attempts. Wait five minutes.","尝试过多，请等待五分钟。","Terlalu banyak percobaan. Tunggu lima menit.");
+            return t("The login service returned an error. Contact support. HTTP ","登录服务返回错误，请联系管理员。HTTP ","Layanan masuk mengembalikan kesalahan. Hubungi admin. HTTP ")+status;
+        }
+        if(e instanceof Api.NoNetwork)return t("No active internet connection. Enable Wi-Fi or mobile data.","没有可用网络，请开启 Wi-Fi 或移动数据。","Tidak ada koneksi internet aktif. Aktifkan Wi-Fi atau data seluler.");
+        if(e instanceof java.net.UnknownHostException)return t("Cannot find the login server. Try another network.","无法解析登录服务器地址，请尝试其他网络。","Alamat server masuk tidak dapat ditemukan. Coba jaringan lain.");
+        if(e instanceof java.net.SocketTimeoutException)return t("The login server took too long to respond. Try another network.","登录服务器响应超时，请尝试其他网络。","Server masuk terlalu lama merespons. Coba jaringan lain.");
+        if(e instanceof javax.net.ssl.SSLException)return t("Secure connection failed. Check automatic date/time or try another network.","安全连接失败，请检查自动日期和时间，或尝试其他网络。","Koneksi aman gagal. Periksa tanggal dan waktu otomatis atau coba jaringan lain.");
+        if(e instanceof java.net.SocketException)return t("Cannot connect to the login server on this network. Try Wi-Fi or mobile data.","当前网络无法连接登录服务器，请切换 Wi-Fi 或移动数据。","Tidak dapat terhubung ke server masuk di jaringan ini. Coba Wi-Fi atau data seluler.");
+        if(e instanceof Api.UnexpectedResponse)return t("Unexpected response from the login service. Contact support.","登录服务响应异常，请联系管理员。","Respons layanan masuk tidak sesuai. Hubungi admin.");
+        return t("Could not complete sign-in. Try again or contact support.","无法完成登录，请重试或联系管理员。","Tidak dapat menyelesaikan proses masuk. Coba lagi atau hubungi admin.");
+    }
     private void toast(String value){Toast.makeText(this,value,Toast.LENGTH_LONG).show();}
     @Override public void onBackPressed(){if(!screen.equals("home")&&!screen.equals("welcome")){if(hasSession())home();else welcome();}else if(screen.equals("home")&&expanded){expanded=false;countryPanel.setVisibility(View.GONE);}else super.onBackPressed();}
     private final class PowerButton extends View {

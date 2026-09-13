@@ -9,6 +9,8 @@ import java.util.UUID;
 
 final class Api {
     static final class Failure extends IOException {final int status;Failure(int n,String s){super(s);status=n;}}
+    static final class NoNetwork extends IOException {}
+    static final class UnexpectedResponse extends IOException {}
     final SecureStore store;private final Context context;
     Api(Context context) throws Exception {this.context=context.getApplicationContext();store=new SecureStore(context);}
     static Network physical(Context c) {
@@ -22,11 +24,18 @@ final class Api {
         }
         return fallback;
     }
+    private Network backendNetwork() {
+        // Login should use the same route as other apps, including an existing VPN.
+        // Once our own tunnel is starting/running, control requests must not depend on it.
+        if(!"OFF".equals(YayVpnService.state))return physical(context);
+        ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        return cm.getActiveNetwork();
+    }
     JSONObject call(String method,String path,JSONObject body) throws Exception {
         byte[] bytes=body==null?new byte[0]:body.toString().getBytes(StandardCharsets.UTF_8);
         String timestamp=Long.toString(System.currentTimeMillis()/1000),nonce=UUID.randomUUID().toString();
         String signature=store.sign(method+"\n"+path+"\n"+timestamp+"\n"+nonce+"\n"+SecureStore.sha(bytes));
-        Network network=physical(context);if(network==null)throw new IOException("No internet connection. Turn on Wi-Fi or mobile data.");
+        Network network=backendNetwork();if(network==null)throw new NoNetwork();
         HttpURLConnection conn=(HttpURLConnection)network.openConnection(new URL(BuildConfig.API_BASE_URL+path));
         conn.setConnectTimeout(15000);conn.setReadTimeout(15000);conn.setInstanceFollowRedirects(false);conn.setRequestMethod(method);
         conn.setRequestProperty("Content-Type","application/json");conn.setRequestProperty("X-Yay-Time",timestamp);conn.setRequestProperty("X-Yay-Nonce",nonce);conn.setRequestProperty("X-Yay-Signature",signature);
@@ -36,7 +45,10 @@ final class Api {
             int code=conn.getResponseCode();InputStream stream=code>=400?conn.getErrorStream():conn.getInputStream();
             byte[] response;try(InputStream in=stream){response=in==null?new byte[0]:readLimited(in);}
             JSONObject result;
-            try{result=new JSONObject(new String(response,StandardCharsets.UTF_8));}catch(Exception ex){throw new IOException("The service returned an unexpected response. Please try again.");}
+            try{result=new JSONObject(new String(response,StandardCharsets.UTF_8));}catch(org.json.JSONException ex){
+                if(code<200||code>=300)throw new Failure(code,"The service returned an HTTP error.");
+                throw new UnexpectedResponse();
+            }
             if(code<200||code>=300)throw new Failure(code,result.optString("error","Could not reach the service."));return result;
         }finally{conn.disconnect();}
     }
