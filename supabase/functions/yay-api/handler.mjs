@@ -23,7 +23,7 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
       if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
       const url=new URL(request.url);const match=url.pathname.match(/^(?:\/functions\/v1)?\/yay-api(\/.*)?$/);
       S.requireValue(match&&!url.search,'Endpoint not found',404);const path=match[1]||'/';const method=request.method;
-      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:1});
+      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:2});
       const raw=await readBody(request);if(raw.length)S.requireValue((request.headers.get('content-type')||'').split(';')[0]==='application/json','Use application/json',415);
       let data;try{data=raw.length?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw)):{};}catch{throw new S.ApiError(400,'Invalid JSON');}
       S.requireValue(data&&typeof data==='object'&&!Array.isArray(data),'Expected a JSON object');
@@ -47,6 +47,9 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
         const context=await call('user_context',{token_hash:tokenHash});const nonceHash=await S.verifyDevice(request,path,raw,context.public_key);
         const auth={token_hash:tokenHash,verified_public_key:context.public_key,nonce_hash:nonceHash};
         if(method==='GET'&&path==='/v1/bootstrap') {const result=await call('user_bootstrap',auth);return respond({...result,seed_key:await vault.seedKey()});}
+        if(method==='GET'&&path==='/v1/devices')return respond(await call('user_devices_list',auth));
+        const devicePath=path.match(/^\/v1\/devices\/([^/]+)$/);
+        if(method==='DELETE'&&devicePath)return respond(await call('user_devices_delete',{...auth,id:uuid(devicePath[1])}));
         if(method==='POST'&&path==='/v1/logout')return respond(await call('user_logout',auth));
         if(method==='POST'&&(path==='/v1/connect'||path==='/v1/heartbeat')) {
           const payload={...auth,server_id:uuid(data.server_id)};

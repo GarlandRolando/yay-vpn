@@ -8,8 +8,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.24.10'
           cache: false
@@ -23,16 +23,18 @@ jobs:
         run: xcodegen generate --spec apple/project.yml
       - name: Compile iPhone and iPad targets
         run: |
+          mkdir -p build-logs
           set -o pipefail
-          xcodebuild -project apple/YayVPN.xcodeproj -scheme YayVPN-iOS -configuration Debug -destination 'generic/platform=iOS' -derivedDataPath .build/apple-ios CODE_SIGNING_ALLOWED=NO build | tee .build/apple-ios.log
+          xcodebuild -project apple/YayVPN.xcodeproj -scheme YayVPN-iOS -configuration Debug -destination 'generic/platform=iOS' -derivedDataPath .build/apple-ios CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build-logs/apple-ios.log
       - name: Compile macOS targets
         run: |
+          mkdir -p build-logs
           set -o pipefail
-          xcodebuild -project apple/YayVPN.xcodeproj -scheme YayVPN-macOS -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath .build/apple-macos CODE_SIGNING_ALLOWED=NO build | tee .build/apple-macos.log
+          xcodebuild -project apple/YayVPN.xcodeproj -scheme YayVPN-macOS -configuration Debug -destination 'generic/platform=macOS' -derivedDataPath .build/apple-macos CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build-logs/apple-macos.log
       - name: Upload compile logs (not an installable app)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Yay-VPN-Apple-compile-logs
-          path: .build/apple-*.log
+          path: build-logs/apple-*.log
           retention-days: 7

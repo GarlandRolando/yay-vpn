@@ -50,3 +50,8 @@ test('Server revisions and disabling are enforced; ciphertext stays out of catal
  await rpc('admin_servers_update',{token_hash:admin,id:s.id,enabled:0});assert.equal((await rpc('user_connect',{...auth(d),server_id:s.id})).status,404);
 });
 test('A valid app session cannot call admin RPC actions',async()=>{const d=await login(await fixture());assert.equal((await rpc('admin_users_list',{token_hash:d.token})).status,401);});
+
+test('Self-service devices: ownership, current-device protection, replay, session revocation and freed slots',async()=>{
+ const {checkDeviceManagement}=await import('./device-management-cases.mjs');
+ await checkDeviceManagement(rpc);
+});

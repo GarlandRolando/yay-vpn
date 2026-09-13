@@ -3,6 +3,12 @@ import SwiftUI
 import Network
 import NetworkExtension
 
+struct YayDevice: Identifiable {
+    let id: String
+    let name: String
+    let isCurrent: Bool
+    let lastSeen: Date
+}
 @MainActor final class YayModel: ObservableObject {
     @Published var signedIn = false
     @Published var connected = false
@@ -11,6 +17,45 @@ import NetworkExtension
     @Published var country = "Singapore"
     @Published var countries: [String] = []
     @Published var pings: [String: Int] = [:]
+    @Published var devices: [YayDevice] = []
+    @Published var deviceLimit = 0
+    @Published var deviceBusy = false
+    @Published private var accountDeadline = ContinuousClock.now
+    private var accountRevision = 0
+    var remainingSeconds: Int64 { max(0, ContinuousClock.now.duration(to: accountDeadline).components.seconds) }
+    var freeSlots: Int { max(0, deviceLimit - devices.count) }
+    private func acceptAccount(_ value: [String: Any]) {
+        deviceLimit = (value["device_limit"] as? Int) ?? 0
+        let expiry = (value["expires_at"] as? Double) ?? 0
+        let serverTime = (value["server_time"] as? Double) ?? Date().timeIntervalSince1970
+        accountDeadline = ContinuousClock.now.advanced(by: .seconds(max(0, expiry - serverTime)))
+    }
+    private func acceptDevices(_ value: [String: Any]) {
+        acceptAccount((value["account"] as? [String: Any]) ?? [:])
+        devices = (value["devices"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let id = item["id"] as? String, let name = item["name"] as? String else { return nil }
+            return YayDevice(id: id, name: name, isCurrent: (item["is_current"] as? Bool) ?? false, lastSeen: Date(timeIntervalSince1970: (item["last_seen"] as? Double) ?? 0))
+        }
+    }
+    private func accountError(_ error: Error) {
+        if let failure = error as? YayFailure, failure.status == 401 || failure.status == 403 {
+            manager?.connection.stopVPNTunnel(); connected = false; try? YayAPI.save("token", nil)
+            signedIn = false; devices = []; accountRevision += 1
+        }
+        status = error.localizedDescription
+    }
+    func loadDevices() async {
+        guard !deviceBusy, !busy, signedIn, let api else { return }
+        deviceBusy = true; defer { deviceBusy = false }; let revision = accountRevision
+        do { let value = try await api.call("GET", "/v1/devices"); guard signedIn, revision == accountRevision else { return }; acceptDevices(value) }
+        catch { if revision == accountRevision { accountError(error) } }
+    }
+    func removeDevice(_ device: YayDevice) async {
+        guard !device.isCurrent, !deviceBusy, signedIn, let api else { return }
+        deviceBusy = true; defer { deviceBusy = false }; let revision = accountRevision
+        do { let value = try await api.call("DELETE", "/v1/devices/" + device.id); guard signedIn, revision == accountRevision else { return }; acceptDevices(value) }
+        catch { if revision == accountRevision { accountError(error) } }
+    }
     private var nodes: [[String: Any]] = []
     private var measurements: [String: Int] = [:]
     private var measuredAt = Date.distantPast
@@ -29,13 +74,14 @@ import NetworkExtension
     }
     func login(_ username: String, _ password: String) async {
         busy = true; defer { busy = false }
-        do { guard let api else { throw YayFailure(status: 0, message: "Apple signing configuration is incomplete") }; try await api.login(username, password); signedIn = true; await refresh() }
+        do { guard let api else { throw YayFailure(status: 0, message: "Apple signing configuration is incomplete") }; try await api.login(username, password); signedIn = true; accountRevision += 1; await refresh() }
         catch { status = error.localizedDescription }
     }
     func refresh() async {
         guard let api else { return }
         do {
             let b = try await api.call("GET", "/v1/bootstrap")
+            acceptAccount((b["account"] as? [String: Any]) ?? [:])
             nodes = b["servers"] as? [[String: Any]] ?? []
             countries = Array(Set(nodes.compactMap { $0["location"] as? String })).sorted()
             if !countries.contains(country) { country = countries.first ?? "" }
@@ -126,5 +172,5 @@ import NetworkExtension
             } catch { finish(false) }
         }
     }
-    func logout() async { currentTask?.cancel(); manager?.connection.stopVPNTunnel(); connected = false; await api?.logout(); signedIn = false; nodes.removeAll(); measurements.removeAll(); pings.removeAll() }
+    func logout() async { accountRevision += 1; devices = []; currentTask?.cancel(); manager?.connection.stopVPNTunnel(); connected = false; await api?.logout(); signedIn = false; nodes.removeAll(); measurements.removeAll(); pings.removeAll() }
 }

@@ -29,3 +29,5 @@ apple/*.xcodeproj/
 *.xcuserstate
 *.mobileprovision
 *.p12
+
+build-logs/

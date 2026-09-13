@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: '5.0'
-    MARKETING_VERSION: 1.2.0
-    CURRENT_PROJECT_VERSION: '3'
+    MARKETING_VERSION: 1.3.0
+    CURRENT_PROJECT_VERSION: '4'
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: 'NO'
 targets:
@@ -24,6 +24,7 @@ targets:
         INFOPLIST_FILE: Config/YayVPN-iOS-Info.plist
         CODE_SIGN_ENTITLEMENTS: Config/YayVPN-iOS.entitlements
         TARGETED_DEVICE_FAMILY: 1,2
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
     - sdk: NetworkExtension.framework
     - sdk: Network.framework
@@ -51,6 +52,7 @@ targets:
     - sdk: Security.framework
     - framework: Libbox.xcframework
       embed: false
+    - sdk: libresolv.tbd
   YayVPN-macOS:
     type: application
     platform: macOS
@@ -63,6 +65,7 @@ targets:
         PRODUCT_NAME: YayVPN-macOS
         INFOPLIST_FILE: Config/YayVPN-macOS-Info.plist
         CODE_SIGN_ENTITLEMENTS: Config/YayVPN-macOS.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
     - sdk: NetworkExtension.framework
     - sdk: Network.framework
@@ -89,6 +92,7 @@ targets:
     - sdk: Security.framework
     - framework: Libbox.xcframework
       embed: false
+    - sdk: libresolv.tbd
 schemes:
   YayVPN-iOS:
     build:

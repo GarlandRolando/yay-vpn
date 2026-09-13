@@ -8,7 +8,7 @@ All clients use the same existing backend:
 
 `https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api`
 
-Your 135 imported server records and existing users remain in Supabase. No migration, re-import, admin secret embedded in an app, or new backend deployment is needed for these clients. A normal user signs in with their Yay username/password. Each device registers separately and consumes a device slot. Logging out does not release a registered device slot; the administrator removes old devices in the admin panel.
+Your 135 imported server records and existing users remain in Supabase. The version 1.3 migration and API update have already been deployed to this project. No manual migration or re-import is needed. Admin secrets are not embedded in the apps. A normal user signs in with their Yay username/password. Each device registers separately and consumes a device slot. Logging out does not release a registered device slot; users can remove their other devices under Settings → Devices & limit, and administrators can also remove devices in the admin panel.
 
 ## 1. Make the Windows app first
 
@@ -102,3 +102,5 @@ Do not call these platform builds production-ready until these checks pass. The 
 On 2026-09-13, all 13 new C#, Swift and Go source files passed structural syntax parsing. Windows XML/XAML, Apple property lists/entitlements, project YAML, workflow YAML and the Apple shell script passed format/syntax checks. All 14 existing backend unit tests passed. These checks do not type-check .NET/Apple APIs, link Libbox, verify signing, render the native UI, or establish a real VPN connection. The manual native-build and device gates remain pending.
 
 Follow-up Windows build fix, 2026-09-13: the GitHub failure at `YayApi.cs` was caused by missing `System.IO` imports. Explicit imports were added to all three affected C# files. A real .NET SDK 8.0.414 publish for `win-x64`, self-contained, completed successfully on the Linux build host. This compiled the WPF client and produced its Windows executable; it did not build or run sing-box or exercise a Windows VPN connection. The Windows workflow's checkout, setup-dotnet and setup-go actions were also updated to Node 24 releases. Start a new manual run on `main` to build the corrected complete package; rerunning the old failed run retains its original commit.
+
+Version 1.3 adds the device manager, remaining-access countdown and Y logo. See `DEVICES-UPDATE.md` for deployment status and current build validation.

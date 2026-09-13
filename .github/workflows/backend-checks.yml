@@ -29,14 +29,17 @@ jobs:
       PGDATABASE: yay_test
       YAY_PG_TEST: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
       - name: Create disposable Supabase-like roles
         run: psql -v ON_ERROR_STOP=1 -c 'create role anon; create role authenticated; create role service_role;'
       - name: Apply migration to disposable Postgres
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/202609130001_yay_vpn.sql
+        run: |
+          for migration in supabase/migrations/*.sql; do
+            psql -v ON_ERROR_STOP=1 -f "$migration"
+          done
       - name: Test cryptography and HTTP authorization
         run: node --test tests/*.test.mjs
       - name: Test actual PostgreSQL transactions and grants

@@ -2,6 +2,10 @@
 
 Yay VPN clients with a black interface, red world map when disconnected, green map after a successful VPN internet check, country-only location selection, and cloud-managed access.
 
+## Version 1.3 update
+
+Device slots and self-service removal are now available under Settings → Devices & limit. The main screen shows remaining access above Refresh locations, and all clients use the white Y / red square logo. The database migration and Edge Function v2 are deployed to the existing project. See [the device update guide](docs/DEVICES-UPDATE.md) for new builds and usage.
+
 ## Windows, iPhone, iPad and Mac
 
 Native Windows x64 and Apple source targets are now included. The Windows .NET client passes a local Windows-targeted publish build; its complete engine bundle and device tests are still pending. Apple native compilation and device tests are also pending. They use your existing Supabase accounts and server list.
@@ -48,6 +52,6 @@ The 135 cloud profiles are a snapshot of the provider's subscription, not automa
 
 Backend: `https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api`
 
-The UI update requires no new cloud migration or secret rotation. Existing users, server records, and access limits remain authoritative. Use the local admin panel from the original Supabase package to manage them.
+The version 1.3 device-management migration and API update have already been applied to this project; no manual re-import or secret rotation is needed. Existing users, server records, and access limits remain authoritative. Use the local admin panel from the original Supabase package to manage them.
 
 See `docs/UI-AND-PHONE-CHECKS.md` for acceptance checks and `GUIDE.md` for backend setup. This code is GPL-3.0-or-later; retain the included licenses and provide corresponding source when distributing builds.

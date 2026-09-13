@@ -55,3 +55,13 @@ test('A token without a valid device signature cannot reach connect dispatch',as
  const handler=createHandler({rpc:async(a,p)=>{assert.equal(a,'user_context');return {public_key:'bad'};},vault,adminHash});
  assert.equal((await req(handler,'/v1/connect',{method:'POST',body:{server_id:serverID},headers:{Authorization:'Bearer '+token}})).status,401);
 });
+
+test('User device routes authenticate signed paths and validate target IDs',async()=>{
+ const pair=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),publicKey=S.base64(pair.publicKey.export({type:'spki',format:'der'}));
+ const calls=[];const handler=createHandler({rpc:async(a,p)=>{calls.push([a,p]);if(a==='user_context')return {public_key:publicKey};return {devices:[],free_slots:1};},vault,adminHash});
+ async function signed(method,path){const ts=String(Math.floor(Date.now()/1000)),nonce=crypto.randomUUID(),raw=new Uint8Array();const sig=sign('sha256',Buffer.from([method,path,ts,nonce,await S.sha(raw)].join('\n')),pair.privateKey);return req(handler,path,{method,headers:{Authorization:'Bearer '+token,'x-yay-time':ts,'x-yay-nonce':nonce,'x-yay-signature':S.base64(sig)}});}
+ assert.equal((await signed('GET','/v1/devices')).status,200);assert.equal(calls.at(-1)[0],'user_devices_list');
+ assert.equal((await signed('DELETE','/v1/devices/'+serverID)).status,200);assert.equal(calls.at(-1)[0],'user_devices_delete');assert.equal(calls.at(-1)[1].id,serverID);
+ const before=calls.length;assert.equal((await signed('DELETE','/v1/devices/not-a-uuid')).status,400);assert.equal(calls.length,before+1);
+ assert.equal((await req(handler,'/v1/devices')).status,401);
+});
