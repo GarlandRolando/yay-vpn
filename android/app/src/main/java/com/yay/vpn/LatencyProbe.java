@@ -20,9 +20,12 @@ final class LatencyProbe {
     private final Context context;private final Api api;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ThreadPoolExecutor pool=(ThreadPoolExecutor)Executors.newFixedThreadPool(6);
+    private final ExecutorService closer=Executors.newSingleThreadExecutor();
     private final AtomicInteger generation=new AtomicInteger();
     private final Map<String,Result> results=new ConcurrentHashMap<>();
     private volatile boolean running;
+    private RequestScope active=new RequestScope();
+    private Runnable deadline;
     LatencyProbe(Context c,Api a){context=c.getApplicationContext();api=a;}
     boolean isRunning(){return running;}
     private String networkKey(){Network n=Api.physical(context);return n==null?"":n.toString();}
@@ -35,29 +38,32 @@ final class LatencyProbe {
         return SelectionPolicy.rank(measured,new java.security.SecureRandom());
     }
 
-    void scan(List<JSONObject> nodes,Listener listener){
-        cancel();int ticket=generation.get();running=true;AtomicInteger done=new AtomicInteger();AtomicBoolean denied=new AtomicBoolean();
+    void scan(List<JSONObject> nodes,Listener listener,long budgetMs){
+        cancel();int ticket=generation.get();active=new RequestScope();final RequestScope scope=active;running=true;AtomicInteger done=new AtomicInteger();AtomicBoolean denied=new AtomicBoolean();
         if(nodes.isEmpty()){running=false;listener.complete();return;}
+        Runnable finish=()->{if(ticket!=generation.get())return;cancel();if(denied.get())listener.unauthorized();else listener.complete();};
+        deadline=finish;main.postDelayed(finish,budgetMs);
         for(JSONObject node:nodes)pool.execute(()->{
             if(ticket!=generation.get())return;
             long elapsed=-1;Network network=Api.physical(context);String key=network==null?"":network.toString();
             try{
-                JSONObject grant=api.call("POST","/v1/connect",new JSONObject().put("server_id",node.getString("id")));
+                JSONObject grant=api.call("POST","/v1/connect",new JSONObject().put("server_id",node.getString("id")),scope,4000);
                 if(ticket!=generation.get())return;
                 JSONObject outbound=grant.getJSONObject("config").getJSONArray("outbounds").getJSONObject(0);
                 if(network!=null){
                     InetAddress[] addresses=network.getAllByName(outbound.getString("server"));
                     if(addresses.length>0){long start=SystemClock.elapsedRealtime();try(Socket socket=network.getSocketFactory().createSocket()){
-                        socket.connect(new InetSocketAddress(addresses[0],outbound.getInt("server_port")),1500);
-                        elapsed=Math.max(1,SystemClock.elapsedRealtime()-start);
+                        scope.track(socket);
+                        try{scope.check();socket.connect(new InetSocketAddress(addresses[0],outbound.getInt("server_port")),1500);elapsed=Math.max(1,SystemClock.elapsedRealtime()-start);}
+                        finally{scope.untrack(socket);}
                     }}
                 }
             }catch(Api.Failure e){if(e.status==401||e.status==403)denied.set(true);}catch(Exception ignored){}
             if(ticket!=generation.get())return;
             results.put(node.optString("id"),new Result(elapsed,node.optInt("revision"),key));int count=done.incrementAndGet();
-            main.post(()->{if(ticket!=generation.get())return;listener.progress(count,nodes.size());if(count==nodes.size()){running=false;if(denied.get())listener.unauthorized();else listener.complete();}});
+            main.post(()->{if(ticket!=generation.get())return;listener.progress(count,nodes.size());if(count==nodes.size()||denied.get())finish.run();});
         });
     }
-    void cancel(){generation.incrementAndGet();running=false;pool.getQueue().clear();}
-    void close(){cancel();pool.shutdownNow();results.clear();}
+    void cancel(){generation.incrementAndGet();running=false;pool.getQueue().clear();if(deadline!=null){main.removeCallbacks(deadline);deadline=null;}RequestScope old=active;old.cancel();if(!closer.isShutdown())closer.execute(old::close);}
+    void close(){cancel();pool.shutdownNow();closer.shutdown();results.clear();}
 }

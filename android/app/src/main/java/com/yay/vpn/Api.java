@@ -32,15 +32,21 @@ final class Api {
         return cm.getActiveNetwork();
     }
     JSONObject call(String method,String path,JSONObject body) throws Exception {
+        return call(method,path,body,null,15000);
+    }
+    JSONObject call(String method,String path,JSONObject body,RequestScope scope,int timeoutMs) throws Exception {
+        if(scope!=null)scope.check();
         byte[] bytes=body==null?new byte[0]:body.toString().getBytes(StandardCharsets.UTF_8);
         String timestamp=Long.toString(System.currentTimeMillis()/1000),nonce=UUID.randomUUID().toString();
         String signature=store.sign(method+"\n"+path+"\n"+timestamp+"\n"+nonce+"\n"+SecureStore.sha(bytes));
         Network network=backendNetwork();if(network==null)throw new NoNetwork();
         HttpURLConnection conn=(HttpURLConnection)network.openConnection(new URL(BuildConfig.API_BASE_URL+path));
-        conn.setConnectTimeout(15000);conn.setReadTimeout(15000);conn.setInstanceFollowRedirects(false);conn.setRequestMethod(method);
+        conn.setConnectTimeout(timeoutMs);conn.setReadTimeout(timeoutMs);conn.setInstanceFollowRedirects(false);conn.setRequestMethod(method);
         conn.setRequestProperty("Content-Type","application/json");conn.setRequestProperty("X-Yay-Time",timestamp);conn.setRequestProperty("X-Yay-Nonce",nonce);conn.setRequestProperty("X-Yay-Signature",signature);
         String token=store.get("token");if(!token.isEmpty())conn.setRequestProperty("Authorization","Bearer "+token);
+        AutoCloseable abort=conn::disconnect;
         try {
+            if(scope!=null){scope.track(abort);scope.check();}
             if(body!=null){conn.setDoOutput(true);conn.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=conn.getOutputStream()){out.write(bytes);}}
             int code=conn.getResponseCode();InputStream stream=code>=400?conn.getErrorStream():conn.getInputStream();
             byte[] response;try(InputStream in=stream){response=in==null?new byte[0]:readLimited(in);}
@@ -49,8 +55,9 @@ final class Api {
                 if(code<200||code>=300)throw new Failure(code,"The service returned an HTTP error.");
                 throw new UnexpectedResponse();
             }
+            if(scope!=null)scope.check();
             if(code<200||code>=300)throw new Failure(code,result.optString("error","Could not reach the service."));return result;
-        }finally{conn.disconnect();}
+        }finally{if(scope!=null)scope.untrack(abort);conn.disconnect();}
     }
     private byte[] readLimited(InputStream in)throws Exception {
         ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n;
