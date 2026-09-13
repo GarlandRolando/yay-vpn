@@ -4,7 +4,7 @@ Yay VPN clients with a black interface, red world map when disconnected, green m
 
 ## Windows, iPhone, iPad and Mac
 
-Native Windows x64 and Apple source targets are now included. These new targets have not yet passed native compilation or device testing. They use your existing Supabase accounts and server list.
+Native Windows x64 and Apple source targets are now included. The Windows .NET client passes a local Windows-targeted publish build; its complete engine bundle and device tests are still pending. Apple native compilation and device tests are also pending. They use your existing Supabase accounts and server list.
 
 - Windows: Actions → **Build Yay VPN Windows test app** → **Run workflow**.
 - Apple: Actions → **Check Yay VPN Apple builds (unsigned)** → **Run workflow**. This produces compile logs; installing an Apple VPN requires eligible signing and provisioning.
