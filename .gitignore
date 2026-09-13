@@ -19,3 +19,13 @@ android/app/src/main/assets/seed.enc
 # Private import files are never source code for publication.
 yay-import-*.mjs
 Yay-VPN-Server-List*/
+
+# Generated native builds and local Apple signing configuration.
+dist/
+windows/**/bin/
+windows/**/obj/
+apple/Libbox.xcframework/
+apple/*.xcodeproj/
+*.xcuserstate
+*.mobileprovision
+*.p12

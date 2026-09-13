@@ -1,0 +1,108 @@
+name: YayVPN
+options:
+  deploymentTarget:
+    iOS: '16.0'
+    macOS: '13.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    MARKETING_VERSION: 1.2.0
+    CURRENT_PROJECT_VERSION: '3'
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: 'NO'
+targets:
+  YayVPN-iOS:
+    type: application
+    platform: iOS
+    sources:
+    - App
+    - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yay.vpn.ios
+        PRODUCT_NAME: YayVPN-iOS
+        INFOPLIST_FILE: Config/YayVPN-iOS-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/YayVPN-iOS.entitlements
+        TARGETED_DEVICE_FAMILY: 1,2
+    dependencies:
+    - sdk: NetworkExtension.framework
+    - sdk: Network.framework
+    - sdk: Security.framework
+    - target: YayTunnel-iOS
+      embed: true
+  YayTunnel-iOS:
+    type: app-extension
+    platform: iOS
+    sources:
+    - Tunnel
+    - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yay.vpn.ios.tunnel
+        PRODUCT_NAME: YayTunnel-iOS
+        INFOPLIST_FILE: Config/YayTunnel-iOS-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/YayTunnel-iOS.entitlements
+        TARGETED_DEVICE_FAMILY: 1,2
+        APPLICATION_EXTENSION_API_ONLY: 'YES'
+        SKIP_INSTALL: 'YES'
+    dependencies:
+    - sdk: NetworkExtension.framework
+    - sdk: Network.framework
+    - sdk: Security.framework
+    - framework: Libbox.xcframework
+      embed: false
+  YayVPN-macOS:
+    type: application
+    platform: macOS
+    sources:
+    - App
+    - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yay.vpn.macos
+        PRODUCT_NAME: YayVPN-macOS
+        INFOPLIST_FILE: Config/YayVPN-macOS-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/YayVPN-macOS.entitlements
+    dependencies:
+    - sdk: NetworkExtension.framework
+    - sdk: Network.framework
+    - sdk: Security.framework
+    - target: YayTunnel-macOS
+      embed: true
+  YayTunnel-macOS:
+    type: app-extension
+    platform: macOS
+    sources:
+    - Tunnel
+    - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yay.vpn.macos.tunnel
+        PRODUCT_NAME: YayTunnel-macOS
+        INFOPLIST_FILE: Config/YayTunnel-macOS-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/YayTunnel-macOS.entitlements
+        APPLICATION_EXTENSION_API_ONLY: 'YES'
+        SKIP_INSTALL: 'YES'
+    dependencies:
+    - sdk: NetworkExtension.framework
+    - sdk: Network.framework
+    - sdk: Security.framework
+    - framework: Libbox.xcframework
+      embed: false
+schemes:
+  YayVPN-iOS:
+    build:
+      targets:
+        YayVPN-iOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  YayVPN-macOS:
+    build:
+      targets:
+        YayVPN-macOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release

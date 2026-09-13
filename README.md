@@ -1,6 +1,14 @@
 # Yay VPN
 
-Android VPN client with a black interface, red world map when disconnected, green map after a successful VPN internet check, country-only location selection, and cloud-managed access.
+Yay VPN clients with a black interface, red world map when disconnected, green map after a successful VPN internet check, country-only location selection, and cloud-managed access.
+
+## Windows, iPhone, iPad and Mac
+
+Native Windows x64 and Apple source targets are now included. These new targets have not yet passed native compilation or device testing. They use your existing Supabase accounts and server list.
+
+- Windows: Actions → **Build Yay VPN Windows test app** → **Run workflow**.
+- Apple: Actions → **Check Yay VPN Apple builds (unsigned)** → **Run workflow**. This produces compile logs; installing an Apple VPN requires eligible signing and provisioning.
+- Follow [the beginner platform guide](docs/WINDOWS-AND-APPLE.md) for download, build and signing steps.
 
 ## Build the Android app
 
@@ -24,7 +32,7 @@ The workflow builds the pinned sing-box native library and the Android app. Your
 - Tap the power button to connect. If necessary, the selected country's servers are measured first. The app chooses among the fastest servers and tries up to three candidates if the VPN connectivity check fails.
 - Settings at top left: Help, language (English, Chinese, Indonesian), and Log out. The back arrow returns to the main screen.
 
-## Latency and connection details
+## Android latency and connection details
 
 The displayed measurement is **TCP ping**, analogous to v2rayNG's TCP connection-time test. It is not ICMP, throughput, or a full authenticated proxy delay. HTTPS through the actual Android VPN network is checked separately before the map turns green. A failed or intercepted HTTP check will not be shown as connected.
 
