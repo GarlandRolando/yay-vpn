@@ -7,7 +7,8 @@ using System.Text.Json.Nodes;
 namespace YayVpn;
 sealed class YayApi : IDisposable {
     internal const string Base="https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api";
-    readonly HttpClient http=new(new HttpClientHandler { AllowAutoRedirect=false,UseProxy=false }) { Timeout=TimeSpan.FromSeconds(20) };
+    // Retire pooled sockets before the next heartbeat so they follow the current VPN route.
+    readonly HttpClient http=new(new SocketsHttpHandler { AllowAutoRedirect=false,UseProxy=false,PooledConnectionLifetime=TimeSpan.FromSeconds(15),ConnectTimeout=TimeSpan.FromSeconds(7) }) { Timeout=TimeSpan.FromSeconds(14) };
     readonly ECDsa key=ECDsa.Create();
     readonly string directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"YayVPN");
     internal string Token { get; private set; }="";
@@ -29,8 +30,10 @@ sealed class YayApi : IDisposable {
         if(Token.Length>0)request.Headers.Authorization=new("Bearer",Token);
         if(data!=null){request.Content=new ByteArrayContent(body);request.Content.Headers.ContentType=new("application/json");}
         using var response=await http.SendAsync(request,ct);string raw=await response.Content.ReadAsStringAsync(ct);
-        var result=JsonNode.Parse(raw)?.AsObject()??throw new IOException("Unexpected cloud response");
-        if(!response.IsSuccessStatusCode)throw new ApiException((int)response.StatusCode,result["error"]?.GetValue<string>()??"Cloud request failed");return result;
+        JsonObject result;
+        try{result=JsonNode.Parse(raw) as JsonObject??throw new System.Text.Json.JsonException();}
+        catch(System.Text.Json.JsonException){if(!response.IsSuccessStatusCode)throw new ApiException((int)response.StatusCode,"Cloud request failed");throw new IOException("Unexpected cloud response");}
+        if(!response.IsSuccessStatusCode)throw new ApiException((int)response.StatusCode,result["error"]?.ToString()??"Cloud request failed");return result;
     }
     internal void ClearSession(){Token="";var file=Path.Combine(directory,"session.bin");if(File.Exists(file))File.Delete(file);}
     internal async Task Login(string user,string password){
