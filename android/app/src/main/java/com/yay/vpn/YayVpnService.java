@@ -25,7 +25,7 @@ public final class YayVpnService extends VpnService {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final AtomicLong generation=new AtomicLong();
     private volatile long leaseDeadline=0;
-    private volatile long connectDeadline=0,lastVerifiedAt=0;
+    private volatile long connectDeadline=0;
     private volatile RequestScope requests=new RequestScope();
     private volatile boolean destroyed;
     private Future<?> starting;
@@ -36,7 +36,7 @@ public final class YayVpnService extends VpnService {
         long now=SystemClock.elapsedRealtime();
         if(state.equals("CONNECTING")&&connectDeadline>0&&now>=connectDeadline){failed=true;requestStop("Connection timed out. Try another country or network.");}
         else if(leaseDeadline>0&&now>=leaseDeadline){failed=true;requestStop("Access check timed out. Connect again when your internet is available.");}
-        else if(state.equals("ON")&&now-lastVerifiedAt>45000){failed=true;requestStop("VPN internet access was lost. Try another country or network.");}
+        // Reachability samples are advisory. A blocked probe host must not stop traffic.
         else if(!destroyed&&!state.equals("OFF")&&!state.equals("STOPPING"))main.postDelayed(this,1000);
     }};
     @Override public void onCreate(){super.onCreate();getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel("vpn","VPN connection",NotificationManager.IMPORTANCE_LOW));}
@@ -70,7 +70,7 @@ public final class YayVpnService extends VpnService {
                 if(leaseDeadline<=SystemClock.elapsedRealtime())throw new Exception("Access expired");
                 synchronized(lifecycle){
                     if(generation.get()!=ticket||requests.isCancelled())return;
-                    state="ON";internetHealthy=true;message="VPN internet access verified.";connectedAt=SystemClock.elapsedRealtime();lastVerifiedAt=connectedAt;connectDeadline=0;
+                    state="ON";internetHealthy=true;message="VPN internet access verified.";connectedAt=SystemClock.elapsedRealtime();connectDeadline=0;
                 }
                 showNotification(local("Connected · ","已连接 · ","Terhubung · ")+serverName);
                 healthCheck=healthWorker.scheduleWithFixedDelay(()->checkHealth(ticket),15,15,TimeUnit.SECONDS);
@@ -84,35 +84,33 @@ public final class YayVpnService extends VpnService {
     }
     private void verifyInternet(long ticket)throws Exception {
         requests.check();
-        ConnectivityManager cm=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
         Network vpn=null;
         for(int attempt=0;attempt<30&&vpn==null;attempt++){
             if(generation.get()!=ticket)throw new Exception("Cancelled");
-            for(Network network:cm.getAllNetworks()){
-                NetworkCapabilities caps=cm.getNetworkCapabilities(network);LinkProperties link=cm.getLinkProperties(network);
-                if(caps==null||link==null||!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))continue;
-                for(LinkAddress address:link.getLinkAddresses())if(address.getAddress().getHostAddress().equals("172.19.0.1"))vpn=network;
-            }
+            vpn=Api.tunnelNetwork(this);
             if(vpn==null)Thread.sleep(100);
         }
         if(vpn==null)throw new java.io.IOException("VPN network unavailable");
         // Explicit VPN network binding prevents a successful direct request being mistaken for a tunnel test.
-        HttpURLConnection connection=(HttpURLConnection)vpn.openConnection(new URL("https://www.gstatic.com/generate_204"));
-        connection.setConnectTimeout(5000);connection.setReadTimeout(5000);connection.setInstanceFollowRedirects(false);connection.setUseCaches(false);
-        AutoCloseable abort=connection::disconnect;
-        try{requests.track(abort);requests.check();if(connection.getResponseCode()!=204)throw new java.io.IOException("VPN internet test failed");requests.check();}
-        finally{requests.untrack(abort);connection.disconnect();}
+        final Network tunnelNetwork=vpn;final RequestScope scope=requests;
+        InternetCheck.verify(url->{
+            HttpURLConnection connection=(HttpURLConnection)tunnelNetwork.openConnection(new URL(url));
+            connection.setConnectTimeout(4000);connection.setReadTimeout(4000);connection.setInstanceFollowRedirects(false);connection.setUseCaches(false);
+            AutoCloseable abort=connection::disconnect;
+            try{scope.track(abort);scope.check();return connection.getResponseCode();}
+            finally{scope.untrack(abort);connection.disconnect();}
+        },scope);
     }
     private void checkHealth(long ticket){
         if(generation.get()!=ticket||!state.equals("ON"))return;
         try{
             verifyInternet(ticket);
             boolean recovered;
-            synchronized(lifecycle){if(generation.get()!=ticket||!state.equals("ON"))return;recovered=!internetHealthy;lastVerifiedAt=SystemClock.elapsedRealtime();internetHealthy=true;}
+            synchronized(lifecycle){if(generation.get()!=ticket||!state.equals("ON"))return;recovered=!internetHealthy;internetHealthy=true;}
             if(recovered)main.post(()->{if(generation.get()==ticket&&state.equals("ON"))showNotification(local("Connected · ","已连接 · ","Terhubung · ")+serverName);});
         }catch(Exception ignored){
             synchronized(lifecycle){if(generation.get()!=ticket||!state.equals("ON"))return;internetHealthy=false;}
-            main.post(()->{if(generation.get()==ticket&&state.equals("ON")&&!internetHealthy)showNotification(local("No internet · checking…","无网络 · 正在检查…","Tidak ada internet · memeriksa…"));});
+            main.post(()->{if(generation.get()==ticket&&state.equals("ON")&&!internetHealthy)showNotification(local("VPN active · internet check unavailable","VPN 已启动 · 网络检查不可用","VPN aktif · pemeriksaan internet tidak tersedia"));});
         }
     }
     private String local(String en,String zh,String id){String lang=getSharedPreferences("display",0).getString("language","en");return lang.equals("zh")?zh:lang.equals("id")?id:en;}
@@ -121,7 +119,12 @@ public final class YayVpnService extends VpnService {
         try{
             long requestAt=SystemClock.elapsedRealtime();JSONObject grant=api.call("POST","/v1/heartbeat",new JSONObject().put("server_id",serverId).put("revision",revision),requests,7000);
             if(generation.get()==ticket)leaseDeadline=requestAt+grant.getLong("lease_seconds")*1000;
-        }catch(Api.Failure ex){if(generation.get()!=ticket)return;failed=true;requestStop(ex.getMessage());if(ex.status==401||ex.status==403)api.store.clear();}
+        }catch(Api.Failure ex){
+            if(generation.get()!=ticket)return;
+            // Retry temporary errors on the next heartbeat without extending the lease.
+            if(ex.status==408||ex.status==425||ex.status==429||(ex.status>=500&&ex.status<=599))return;
+            failed=true;requestStop(ex.getMessage());if(ex.status==401||ex.status==403)api.store.clear();
+        }
         catch(Exception ignored){ /* Existing monotonic lease continues; watchdog stops on expiry. */ }
     }
     int openTunnel(TunOptions options)throws Exception{

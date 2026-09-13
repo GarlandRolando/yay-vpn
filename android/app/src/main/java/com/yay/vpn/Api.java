@@ -24,9 +24,20 @@ final class Api {
         }
         return fallback;
     }
+    static Network tunnelNetwork(Context context) {
+        ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        for(Network network:cm.getAllNetworks()){
+            NetworkCapabilities caps=cm.getNetworkCapabilities(network);LinkProperties link=cm.getLinkProperties(network);
+            if(caps==null||link==null||!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))continue;
+            for(LinkAddress address:link.getLinkAddresses())if("172.19.0.1".equals(address.getAddress().getHostAddress()))return network;
+        }
+        return null;
+    }
     private Network backendNetwork() {
-        // Login should use the same route as other apps, including an existing VPN.
-        // Once our own tunnel is starting/running, control requests must not depend on it.
+        // Once established, API traffic may use our tunnel like any other app traffic.
+        // Only the core's upstream sockets need to bypass the VPN to avoid a loop.
+        if("ON".equals(YayVpnService.state)){Network vpn=tunnelNetwork(context);if(vpn!=null)return vpn;}
+        // Before startup there is no working Yay tunnel available for authorization.
         if(!"OFF".equals(YayVpnService.state))return physical(context);
         ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
         return cm.getActiveNetwork();
