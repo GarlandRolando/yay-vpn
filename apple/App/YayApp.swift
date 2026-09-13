@@ -13,7 +13,10 @@ struct ContentView: View {
     @AppStorage("language") private var language = "en"
     @State private var removal: YayDevice?
     @State private var addingDevice = false
-    @State private var username = "", password = "", page = "welcome", expanded = false
+    @State private var username = ""
+    @State private var password = ""
+    @State private var page = "welcome"
+    @State private var expanded = false
     func t(_ en: String, _ zh: String, _ id: String) -> String { language == "zh" ? zh : language == "id" ? id : en }
     var body: some View {
         ScrollView {
