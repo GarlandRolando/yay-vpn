@@ -31,7 +31,7 @@ public final class MainActivity extends Activity {
     private final Runnable ticker=new Runnable(){public void run(){if(visible&&screen.equals("home"))updateStatus();if(visible)handler.postDelayed(this,1000);}};
     private String t(String en,String zh,String id){return language.equals("zh")?zh:language.equals("id")?id:en;}
     @Override public void onCreate(Bundle bundle){
-        super.onCreate(bundle);getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        super.onCreate(bundle);
         language=getSharedPreferences("display",0).getString("language","en");
         try{api=new Api(this);probes=new LatencyProbe(this,api);if(api.store.get("token").isEmpty())welcome();else{readCache();home();}}
         catch(Exception e){new AlertDialog.Builder(this).setTitle("Yay VPN").setMessage(t("Secure storage is unavailable. Restart your phone and try again.","安全存储不可用，请重启手机后重试。","Penyimpanan aman tidak tersedia. Mulai ulang ponsel dan coba lagi.")).setPositiveButton("OK",(d,w)->finish()).show();}
