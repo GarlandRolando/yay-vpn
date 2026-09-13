@@ -1,0 +1,43 @@
+plugins { id 'com.android.application' }
+def yay = new Properties()
+def yayFile = rootProject.file('yay.properties')
+if (yayFile.exists()) yayFile.withInputStream { yay.load(it) }
+def apiUrl = System.getenv('YAY_API_URL') ?: yay.getProperty('API_BASE_URL', '')
+if (!(apiUrl ==~ /^https:\/\/[a-z0-9]{10,40}\.supabase\.co\/functions\/v1\/yay-api$/)) throw new GradleException('Run node scripts/setup.mjs or set YAY_API_URL to https://PROJECT_REF.supabase.co/functions/v1/yay-api.')
+if (!file('libs/libbox.aar').exists()) throw new GradleException('Native engine missing: run scripts/build-core.sh first. See START-HERE.md.')
+android {
+    namespace 'com.yay.vpn'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.yay.vpn'
+        minSdk 26
+        targetSdk 35
+        versionCode 3
+        versionName '1.2.0'
+        buildConfigField 'String', 'API_BASE_URL', '"' + apiUrl + '"'
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    signingConfigs {
+        release {
+            if (System.getenv('YAY_KEYSTORE')) {
+                storeFile file(System.getenv('YAY_KEYSTORE'))
+                storePassword System.getenv('YAY_STORE_PASSWORD')
+                keyAlias System.getenv('YAY_KEY_ALIAS')
+                keyPassword System.getenv('YAY_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug { applicationIdSuffix '.debug'; versionNameSuffix '-test' }
+        release {
+            minifyEnabled false
+            if (System.getenv('YAY_KEYSTORE')) signingConfig signingConfigs.release
+        }
+    }
+    packaging { jniLibs { useLegacyPackaging = false } }
+}
+dependencies {
+    implementation files('libs/libbox.aar')
+    testImplementation 'junit:junit:4.13.2'
+}

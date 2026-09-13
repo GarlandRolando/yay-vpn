@@ -1,0 +1,5 @@
+project_id = "yay-vpn"
+[functions.yay-api]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/yay-api/index.ts"

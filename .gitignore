@@ -1,0 +1,21 @@
+.yay-secrets.env
+.yay-local.json
+.env
+*.pem
+*.jks
+*.keystore
+backups/
+.build/
+node_modules/
+supabase/.temp/
+android/.gradle/
+android/local.properties
+android/yay.properties
+android/**/build/
+android/app/libs/*.aar
+android/app/src/main/assets/seed.enc
+**/__pycache__/
+
+# Private import files are never source code for publication.
+yay-import-*.mjs
+Yay-VPN-Server-List*/

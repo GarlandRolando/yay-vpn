@@ -1,0 +1,43 @@
+name: Test Supabase backend
+on:
+  workflow_dispatch:
+  push:
+    paths: ['supabase/**', 'tests/**', '.github/workflows/backend-checks.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: yay_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d yay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: test-only-password
+      PGDATABASE: yay_test
+      YAY_PG_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Create disposable Supabase-like roles
+        run: psql -v ON_ERROR_STOP=1 -c 'create role anon; create role authenticated; create role service_role;'
+      - name: Apply migration to disposable Postgres
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/202609130001_yay_vpn.sql
+      - name: Test cryptography and HTTP authorization
+        run: node --test tests/*.test.mjs
+      - name: Test actual PostgreSQL transactions and grants
+        run: node --test tests/postgres-integration.mjs
