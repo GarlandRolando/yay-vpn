@@ -11,6 +11,7 @@ sealed class Tunnel : IDisposable {
     Process? engine;IntPtr job;
     CancellationTokenSource? monitor;
     internal bool Connected {get;private set;}
+    internal LiveTelemetry? Telemetry {get;private set;}
     internal event Action? Stopped;
     internal Tunnel(YayApi api){this.api=api;}
     internal async Task Connect(string id,CancellationToken ct){
@@ -29,6 +30,7 @@ sealed class Tunnel : IDisposable {
         var exe=Path.Combine(AppContext.BaseDirectory,"engine","sing-box.exe");if(!File.Exists(exe))throw new IOException("Native VPN engine missing. Extract the complete app ZIP.");
         var start=new ProcessStartInfo(exe,"run -c stdin"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardError=true,RedirectStandardOutput=true,WorkingDirectory=Path.GetDirectoryName(exe)!};
         try{
+            Telemetry=new LiveTelemetry(config);
             engine=Process.Start(start)??throw new IOException("Could not start VPN engine");
             job=CreateJobObject(IntPtr.Zero,null);if(job==IntPtr.Zero)throw new IOException("Could not create process guard");
             var info=new ExtendedLimits{BasicLimitInformation=new BasicLimits{LimitFlags=0x2000}};
@@ -44,7 +46,7 @@ sealed class Tunnel : IDisposable {
             }
             if(!ready)throw new IOException("VPN internet check failed");
             double remaining=grant["lease_seconds"]!.GetValue<double>()-Stopwatch.GetElapsedTime(requested).TotalSeconds;
-            if(remaining<=0)throw new IOException("Access expired");Connected=true;monitor=new();var watcherToken=monitor.Token;_=Task.Run(()=>Watch(id,revision,remaining,expiry,activeGeneration,watcherToken));
+            if(remaining<=0)throw new IOException("Access expired");Connected=true;Telemetry.Start();monitor=new();var watcherToken=monitor.Token;_=Task.Run(()=>Watch(id,revision,remaining,expiry,activeGeneration,watcherToken));
         }catch{Stop();throw;}
     }
     async Task Watch(string id,int revision,double remaining,long expiry,long activeGeneration,CancellationToken ct){
@@ -59,7 +61,7 @@ sealed class Tunnel : IDisposable {
         bool stopped=false;lock(stateGate){if(!ct.IsCancellationRequested&&activeGeneration==generation){Stop();stopped=true;}}
         if(stopped)Stopped?.Invoke();
     }
-    internal void Stop(){lock(stateGate){generation++;monitor?.Cancel();monitor?.Dispose();monitor=null;Connected=false;if(engine!=null){try{if(!engine.HasExited)engine.Kill(true);}catch{}engine.Dispose();engine=null;}if(job!=IntPtr.Zero){CloseHandle(job);job=IntPtr.Zero;}}}
+    internal void Stop(){lock(stateGate){generation++;Telemetry?.Dispose();Telemetry=null;monitor?.Cancel();monitor?.Dispose();monitor=null;Connected=false;if(engine!=null){try{if(!engine.HasExited)engine.Kill(true);}catch{}engine.Dispose();engine=null;}if(job!=IntPtr.Zero){CloseHandle(job);job=IntPtr.Zero;}}}
     public void Dispose()=>Stop();
     [StructLayout(LayoutKind.Sequential)]struct BasicLimits{public long PerProcessUserTimeLimit,PerJobUserTimeLimit;public uint LimitFlags;public UIntPtr MinimumWorkingSetSize,MaximumWorkingSetSize;public uint ActiveProcessLimit;public UIntPtr Affinity;public uint PriorityClass,SchedulingClass;}
     [StructLayout(LayoutKind.Sequential)]struct IoCounters{public ulong ReadOperationCount,WriteOperationCount,OtherOperationCount,ReadTransferCount,WriteTransferCount,OtherTransferCount;}

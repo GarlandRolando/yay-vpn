@@ -13,7 +13,7 @@ public partial class MainWindow {
     bool deviceBusy; int devicePage;
     TextBlock? remainingText;
     readonly DispatcherTimer accountTicker=new(){Interval=TimeSpan.FromSeconds(1)};
-    void StartAccountClock(){accountTicker.Tick+=(_,_)=>UpdateRemaining();accountTicker.Start();}
+    void StartAccountClock(){accountTicker.Tick+=(_,_)=>{UpdateRemaining();UpdateTraffic();};accountTicker.Start();}
     void AcceptAccount(JsonObject value){account=value;remainingAtSync=Math.Max(0,(value["expires_at"]?.GetValue<long>()??0)-(value["server_time"]?.GetValue<long>()??DateTimeOffset.UtcNow.ToUnixTimeSeconds()));accountSyncedAt=Stopwatch.GetTimestamp();UpdateRemaining();}
     void UpdateRemaining(){if(remainingText==null)return;long seconds=Math.Max(0,remainingAtSync-(long)Stopwatch.GetElapsedTime(accountSyncedAt).TotalSeconds);remainingText.Text=seconds==0?T("Access expired","访问已过期","Akses kedaluwarsa"):T("Time remaining: ","剩余时间：","Sisa waktu: ")+T($"{seconds/86400}d {seconds%86400/3600:D2}h {seconds%3600/60:D2}m {seconds%60:D2}s",$"{seconds/86400}天 {seconds%86400/3600:D2}时 {seconds%3600/60:D2}分 {seconds%60:D2}秒",$"{seconds/86400}h {seconds%86400/3600:D2}j {seconds%3600/60:D2}m {seconds%60:D2}d");}
     void RemainingLabel(){remainingText=new TextBlock{FontSize=16,Foreground=Brushes.White,Margin=new(0,14,0,8),TextAlignment=TextAlignment.Center};Root.Children.Add(remainingText);UpdateRemaining();}

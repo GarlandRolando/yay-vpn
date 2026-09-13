@@ -4,6 +4,15 @@ import static org.junit.Assert.*;
 import java.util.*;
 
 public class SelectionPolicyTest {
+    @Test public void lightningPicksOneUntestedServerFromSelectedCountry(){
+        List<String> country=Arrays.asList("sg-1","sg-2","sg-3");Set<String> picked=new HashSet<>();
+        for(int i=0;i<100;i++){List<String> choice=SelectionPolicy.lightning(country,new Random(i*123L));assertEquals(1,choice.size());assertTrue(country.contains(choice.get(0)));picked.add(choice.get(0));}
+        assertEquals(new HashSet<>(country),picked);assertEquals(Arrays.asList("sg-1","sg-2","sg-3"),country);
+    }
+    @Test public void lightningHandlesEmptyAndSingleServerCountries(){
+        assertTrue(SelectionPolicy.lightning(Collections.emptyList(),new Random(1)).isEmpty());
+        assertEquals(Collections.singletonList("only"),SelectionPolicy.lightning(Collections.singletonList("only"),new Random(1)));
+    }
     @Test public void unreachableServersAreNeverSelected(){
         Map<String,Long> m=new HashMap<>();m.put("timeout",-1L);m.put("slow",500L);m.put("fast",50L);
         assertEquals(Arrays.asList("fast","slow"),SelectionPolicy.rank(m,new Random(3)));

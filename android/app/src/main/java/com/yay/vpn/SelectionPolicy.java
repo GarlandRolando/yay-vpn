@@ -3,6 +3,10 @@ import java.util.*;
 
 /** Keep fast servers first and spread clients only among close latency ties. */
 final class SelectionPolicy {
+    static List<String> lightning(List<String> candidates,Random random){
+        if(candidates.isEmpty())return Collections.emptyList();
+        return Collections.singletonList(candidates.get(random.nextInt(candidates.size())));
+    }
     static List<String> rank(Map<String,Long> measurements,Random random){
         List<String> live=new ArrayList<>();
         for(Map.Entry<String,Long> e:measurements.entrySet())if(e.getValue()>=0)live.add(e.getKey());

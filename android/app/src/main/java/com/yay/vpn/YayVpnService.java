@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class YayVpnService extends VpnService {
     static volatile String state="OFF",message="Ready when you are.",serverName="";
     static volatile long connectedAt=0;
+    static volatile TunnelTelemetry telemetry;
     static volatile boolean failed=false;
     private ArrayList<String> candidates=new ArrayList<>();
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
@@ -44,8 +45,8 @@ public final class YayVpnService extends VpnService {
                 if(generation.get()!=ticket)return;
                 leaseDeadline=requestAt+grant.getLong("lease_seconds")*1000;
                 if(leaseDeadline<=SystemClock.elapsedRealtime())throw new Exception("Access expired");
-                revision=grant.getInt("revision");String config=grant.getJSONObject("config").toString();
-                api.store.put("last_config",config);
+                revision=grant.getInt("revision");JSONObject coreConfig=grant.getJSONObject("config");
+                telemetry=new TunnelTelemetry(coreConfig);String config=coreConfig.toString();
                 SetupOptions options=new SetupOptions();options.setBasePath(getFilesDir().getAbsolutePath());options.setWorkingPath(getFilesDir().getAbsolutePath());options.setTempPath(getCacheDir().getAbsolutePath());options.setFixAndroidStack(true);Libbox.setup(options);
                 platform=new AndroidPlatform(this);box=Libbox.newService(config,platform);box.start();
                 verifyInternet(ticket);
@@ -53,7 +54,7 @@ public final class YayVpnService extends VpnService {
                 if(leaseDeadline<=SystemClock.elapsedRealtime())throw new Exception("Access expired");
                 state="ON";message="VPN internet access verified.";connectedAt=SystemClock.elapsedRealtime();showNotification(local("Connected · ","已连接 · ","Terhubung · ")+serverName);
                 main.removeCallbacks(watchdog);main.post(watchdog);
-                heartbeat=worker.scheduleWithFixedDelay(()->renew(ticket),45,45,TimeUnit.SECONDS);return;
+                telemetry.start();heartbeat=worker.scheduleWithFixedDelay(()->renew(ticket),45,45,TimeUnit.SECONDS);return;
             }catch(Exception ex){failure=ex;closeCore();leaseDeadline=0;
                 if(ex instanceof Api.Failure&&(((Api.Failure)ex).status==401||((Api.Failure)ex).status==403))break;
             }
@@ -108,6 +109,7 @@ public final class YayVpnService extends VpnService {
         worker.execute(()->{closeCore();state="OFF";connectedAt=0;stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();});
     }
     private void closeCore(){
+        TunnelTelemetry old=telemetry;telemetry=null;if(old!=null)old.close();
         if(heartbeat!=null){heartbeat.cancel(false);heartbeat=null;}
         if(box!=null){try{box.close();}catch(Exception ignored){}box=null;}
         if(platform!=null){platform.shutdown();platform=null;}

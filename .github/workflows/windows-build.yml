@@ -16,6 +16,8 @@ jobs:
         with:
           go-version: '1.24.10'
           cache: false
+      - name: Check selection and live telemetry
+        run: dotnet run --project tests/windows-client/ClientChecks.csproj
       - name: Compile Windows client
         shell: pwsh
         run: |
