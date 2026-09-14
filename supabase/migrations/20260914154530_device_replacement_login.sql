@@ -60,13 +60,17 @@ begin
   for update;
 
   if not found then
-    target=(p_payload->>'replace_device_id')::uuid;
-    delete from yay_private.devices where id=target and user_id=u.id;
-    if not found then
-      return '{"status":404,"error":"That device is no longer registered. Choose another device."}'::jsonb;
-    end if;
-
+    -- If a slot became free while the chooser was open, use it and keep every
+    -- existing device. Otherwise revoke exactly the selected device.
     select count(*) into count_now from yay_private.devices where user_id=u.id;
+    if count_now>=u.device_limit then
+      target=(p_payload->>'replace_device_id')::uuid;
+      delete from yay_private.devices where id=target and user_id=u.id;
+      if not found then
+        return '{"status":404,"error":"That device is no longer registered. Choose another device."}'::jsonb;
+      end if;
+      select count(*) into count_now from yay_private.devices where user_id=u.id;
+    end if;
     if count_now>=u.device_limit then
       return '{"status":409,"error":"Device limit changed. Choose a device again."}'::jsonb;
     end if;
