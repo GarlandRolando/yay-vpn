@@ -48,7 +48,9 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
           try {result=await call('login_finish',loginPayload);}
           catch(error) {
             if(!(error instanceof S.ApiError)||error.status!==409||!/Device limit/i.test(error.message))throw error;
-            return respond(await call('login_replace',{user_id:user.id,verified_hash:user.password_hash}));
+            const replacement=await call('login_replace',{user_id:user.id,verified_hash:user.password_hash});
+            if(replacement?.requires_device_replacement===true)return respond(replacement);
+            throw error;
           }
         }
         return respond({...result,token:resultToken});
