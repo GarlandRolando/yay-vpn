@@ -34,10 +34,15 @@ public final class YayVpnService extends VpnService {
     private Api api;private String serverId="";private int revision;
     private final Runnable watchdog=new Runnable(){public void run(){
         long now=SystemClock.elapsedRealtime();
-        if(state.equals("CONNECTING")&&connectDeadline>0&&now>=connectDeadline){failed=true;requestStop("Connection timed out. Try another country or network.");}
-        else if(leaseDeadline>0&&now>=leaseDeadline){failed=true;requestStop("Access check timed out. Connect again when your internet is available.");}
-        // Reachability samples are advisory. A blocked probe host must not stop traffic.
-        else if(!destroyed&&!state.equals("OFF")&&!state.equals("STOPPING"))main.postDelayed(this,1000);
+        if(state.equals("CONNECTING")&&connectDeadline>0&&now>=connectDeadline){failed=true;requestStop("Connection timed out. Try another country or network.");return;}
+        if(leaseDeadline>0&&now>=leaseDeadline){
+            // A missed cloud heartbeat is not proof that the tunnel is dead. Keep the VPN
+            // owned by the user and allow the engine/next heartbeat to recover when the
+            // underlying network comes back. An explicit 401/403 still stops access.
+            leaseDeadline=0;internetHealthy=false;message="Connection interrupted. Retrying automatically…";
+            if(state.equals("ON"))showNotification(local("Reconnecting automatically…","正在自动重新连接…","Menghubungkan kembali otomatis…"));
+        }
+        if(!destroyed&&!state.equals("OFF")&&!state.equals("STOPPING"))main.postDelayed(this,1000);
     }};
     @Override public void onCreate(){super.onCreate();getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel("vpn","VPN connection",NotificationManager.IMPORTANCE_LOW));}
     @Override public int onStartCommand(Intent intent,int flags,int startId){
@@ -109,8 +114,8 @@ public final class YayVpnService extends VpnService {
             synchronized(lifecycle){if(generation.get()!=ticket||!state.equals("ON"))return;recovered=!internetHealthy;internetHealthy=true;}
             if(recovered)main.post(()->{if(generation.get()==ticket&&state.equals("ON"))showNotification(local("Connected · ","已连接 · ","Terhubung · ")+serverName);});
         }catch(Exception ignored){
-            synchronized(lifecycle){if(generation.get()!=ticket||!state.equals("ON"))return;internetHealthy=false;}
-            main.post(()->{if(generation.get()==ticket&&state.equals("ON")&&!internetHealthy)showNotification(local("VPN active · internet check unavailable","VPN 已启动 · 网络检查不可用","VPN aktif · pemeriksaan internet tidak tersedia"));});
+            synchronized(lifecycle){if(generation.get()!=ticket||!state.equals("ON"))return;internetHealthy=false;message="Connection interrupted. Retrying automatically…";}
+            main.post(()->{if(generation.get()==ticket&&state.equals("ON")&&!internetHealthy)showNotification(local("VPN active · reconnecting automatically","VPN 已启动 · 正在自动重新连接","VPN aktif · menghubungkan kembali otomatis"));});
         }
     }
     private String local(String en,String zh,String id){String lang=getSharedPreferences("display",0).getString("language","en");return lang.equals("zh")?zh:lang.equals("id")?id:en;}
@@ -118,14 +123,14 @@ public final class YayVpnService extends VpnService {
         if(generation.get()!=ticket||!state.equals("ON"))return;
         try{
             long requestAt=SystemClock.elapsedRealtime();JSONObject grant=api.call("POST","/v1/heartbeat",new JSONObject().put("server_id",serverId).put("revision",revision),requests,7000);
-            if(generation.get()==ticket)leaseDeadline=requestAt+grant.getLong("lease_seconds")*1000;
+            if(generation.get()==ticket){leaseDeadline=requestAt+grant.getLong("lease_seconds")*1000;message="VPN internet access verified.";}
         }catch(Api.Failure ex){
             if(generation.get()!=ticket)return;
             // Retry temporary errors on the next heartbeat without extending the lease.
-            if(ex.status==408||ex.status==425||ex.status==429||(ex.status>=500&&ex.status<=599))return;
+            if(ex.status==408||ex.status==425||ex.status==429||(ex.status>=500&&ex.status<=599)){internetHealthy=false;message="Connection interrupted. Retrying automatically…";return;}
             failed=true;requestStop(ex.getMessage());if(ex.status==401||ex.status==403)api.store.clear();
         }
-        catch(Exception ignored){ /* Existing monotonic lease continues; watchdog stops on expiry. */ }
+        catch(Exception ignored){ internetHealthy=false;message="Connection interrupted. Retrying automatically…"; /* Keep the user-owned tunnel alive and retry later. */ }
     }
     int openTunnel(TunOptions options)throws Exception{
         requests.check();

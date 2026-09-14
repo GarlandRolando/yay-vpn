@@ -59,7 +59,7 @@ sealed class Tunnel : IDisposable {
             if(remaining<=0)throw new IOException("Access expired");
             lock(stateGate){
                 work.ThrowIfCancellationRequested();if(!ReferenceEquals(current,attempt))throw new OperationCanceledException(work);
-                attempt.MarkConnected();telemetry=metrics;healthy=true;
+                attempt.MarkConnected();telemetry=metrics;healthy=true;lastError="";
             }
             metrics.Start();
             _=Task.Run(()=>CheckHealth(attempt,check));
@@ -79,8 +79,12 @@ sealed class Tunnel : IDisposable {
             await Task.Delay(15000,ct).ConfigureAwait(false);
             bool success=true;
             try{await InternetProbe.Verify(check,ct).ConfigureAwait(false);}catch(IOException){success=false;}
-            lock(stateGate){if(!ReferenceEquals(current,attempt)||ct.IsCancellationRequested)return;healthy=success;}
-            // Probe failure is advisory; never disconnect or switch servers here.
+            lock(stateGate){
+                if(!ReferenceEquals(current,attempt)||ct.IsCancellationRequested)return;
+                healthy=success;
+                lastError=success?"":"Connection interrupted. Retrying automatically…";
+            }
+            // Probe failure is advisory. Never disconnect here; the user owns tunnel lifetime.
         }}catch(OperationCanceledException){}catch(ObjectDisposedException){}
     }
 
@@ -89,19 +93,34 @@ sealed class Tunnel : IDisposable {
         long next=Environment.TickCount64+45000,renewedRequest=0;Task<JsonObject>? renewal=null;
         string reason="";
         try{while(!ct.IsCancellationRequested){
-            if(engine.HasExited){reason="VPN engine stopped. Connect again.";break;}
-            if(Stopwatch.GetElapsedTime(renewed).TotalSeconds>=lease){reason="Access check timed out. Reconnect when the cloud service is reachable.";break;}
+            if(engine.HasExited){reason="VPN engine stopped unexpectedly.";break;}
+            if(Stopwatch.GetElapsedTime(renewed).TotalSeconds>=lease){
+                // Losing the cloud heartbeat during a brief network interruption is not a
+                // user disconnect. Keep the tunnel alive and continue retrying heartbeats.
+                lock(stateGate){if(ReferenceEquals(current,attempt)){healthy=false;lastError="Connection interrupted. Retrying automatically…";}}
+                next=Math.Min(next,Environment.TickCount64+5000);
+            }
             if(renewal==null&&Environment.TickCount64>=next){next=Environment.TickCount64+45000;renewedRequest=Stopwatch.GetTimestamp();renewal=api.Call("POST","/v1/heartbeat",new(){["server_id"]=id,["revision"]=revision},ct);}
             if(renewal?.IsCompleted==true){
-                try{var grant=await renewal.ConfigureAwait(false);renewed=renewedRequest;lease=grant["lease_seconds"]!.GetValue<double>();}
-                catch(ApiException e) when(InternetProbe.TemporaryHttp(e.Status)){}
+                try{
+                    var grant=await renewal.ConfigureAwait(false);renewed=renewedRequest;lease=grant["lease_seconds"]!.GetValue<double>();
+                    lock(stateGate){if(ReferenceEquals(current,attempt)){lastError="";}}
+                }
+                catch(ApiException e) when(InternetProbe.TemporaryHttp(e.Status)){
+                    lock(stateGate){if(ReferenceEquals(current,attempt)){healthy=false;lastError="Connection interrupted. Retrying automatically…";}}
+                    next=Math.Min(next,Environment.TickCount64+5000);
+                }
                 catch(ApiException e){reason="Access check rejected (HTTP "+e.Status+"). Sign in again or contact support.";break;}
-                catch(Exception) when(!ct.IsCancellationRequested){} // Original lease is never extended by a failed request.
+                catch(Exception) when(!ct.IsCancellationRequested){
+                    lock(stateGate){if(ReferenceEquals(current,attempt)){healthy=false;lastError="Connection interrupted. Retrying automatically…";}}
+                    next=Math.Min(next,Environment.TickCount64+5000);
+                }
                 renewal=null;
             }
             await Task.Delay(500,ct).ConfigureAwait(false);
         }}catch(OperationCanceledException){return;}catch(ObjectDisposedException){return;}
         finally{if(renewal!=null)_=Observe(renewal);}
+        // Only terminal failures reach here. Temporary loss never disposes the session.
         if(!ct.IsCancellationRequested&&StopAttempt(attempt,reason))Stopped?.Invoke();
     }
     static async Task Observe(Task task){try{await task.ConfigureAwait(false);}catch{}}
