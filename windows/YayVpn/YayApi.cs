@@ -37,8 +37,18 @@ sealed class YayApi : IDisposable {
     }
     internal void ClearSession(){Token="";var file=Path.Combine(directory,"session.bin");if(File.Exists(file))File.Delete(file);}
     internal async Task Login(string user,string password){
-        var result=await Call("POST","/v1/login",new(){["username"]=user,["password"]=password,["public_key"]=Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()),["device_name"]="Windows · "+Environment.MachineName});
-        Token=result["token"]!.GetValue<string>();File.WriteAllBytes(Path.Combine(directory,"session.bin"),Protect(Encoding.UTF8.GetBytes(Token)));
+        string? replacement=null;
+        while(true){
+            var body=new JsonObject{["username"]=user,["password"]=password,["public_key"]=Convert.ToBase64String(key.ExportSubjectPublicKeyInfo()),["device_name"]="Windows · "+Environment.MachineName};
+            if(replacement!=null)body["replace_device_id"]=replacement;
+            var result=await Call("POST","/v1/login",body);
+            if(result["requires_device_replacement"]?.GetValue<bool>()==true){
+                replacement=DeviceReplacementDialog.Choose(result["devices"]?.AsArray()??new JsonArray());
+                if(replacement==null)throw new ApiException(409,"Device limit reached. Sign-in was cancelled.");
+                continue;
+            }
+            Token=result["token"]!.GetValue<string>();File.WriteAllBytes(Path.Combine(directory,"session.bin"),Protect(Encoding.UTF8.GetBytes(Token)));return;
+        }
     }
     internal async Task Logout(){try{await Call("POST","/v1/logout",new());}finally{Token="";File.Delete(Path.Combine(directory,"session.bin"));}}
     public void Dispose(){key.Dispose();http.Dispose();}
