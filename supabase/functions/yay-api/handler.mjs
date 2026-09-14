@@ -23,7 +23,7 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
       if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
       const url=new URL(request.url);const match=url.pathname.match(/^(?:\/functions\/v1)?\/yay-api(\/.*)?$/);
       S.requireValue(match&&!url.search,'Endpoint not found',404);const path=match[1]||'/';const method=request.method;
-      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:2});
+      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:3});
       const raw=await readBody(request);if(raw.length)S.requireValue((request.headers.get('content-type')||'').split(';')[0]==='application/json','Use application/json',415);
       let data;try{data=raw.length?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw)):{};}catch{throw new S.ApiError(400,'Invalid JSON');}
       S.requireValue(data&&typeof data==='object'&&!Array.isArray(data),'Expected a JSON object');
@@ -38,8 +38,19 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
         const user=await call('login_lookup',{username:name});const valid=await S.verifyPassword(password,user.password_hash||dummyHash);
         S.requireValue(user.id&&valid,'Incorrect username or password',401);
         const publicKey=string(data.public_key,1024,'device key');const nonceHash=await S.verifyDevice(request,path,raw,publicKey);
-        const resultToken=S.randomToken();const result=await call('login_finish',{user_id:user.id,verified_hash:user.password_hash,public_key:publicKey,nonce_hash:nonceHash,
-          device_name:string(data.device_name||'Android device',80,'device name'),token_hash:await S.sha(resultToken)});
+        const resultToken=S.randomToken();
+        const loginPayload={user_id:user.id,verified_hash:user.password_hash,public_key:publicKey,nonce_hash:nonceHash,
+          device_name:string(data.device_name||'Android device',80,'device name'),token_hash:await S.sha(resultToken)};
+        let result;
+        if(data.replace_device_id!==undefined) {
+          result=await call('login_replace',{...loginPayload,replace_device_id:uuid(data.replace_device_id)});
+        } else {
+          try {result=await call('login_finish',loginPayload);}
+          catch(error) {
+            if(!(error instanceof S.ApiError)||error.status!==409||!/Device limit/i.test(error.message))throw error;
+            return respond(await call('login_replace',{user_id:user.id,verified_hash:user.password_hash}));
+          }
+        }
         return respond({...result,token:resultToken});
       }
       if(path.startsWith('/v1/')) {
