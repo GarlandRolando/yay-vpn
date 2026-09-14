@@ -28,7 +28,6 @@ class Vault {
   async open(value) { const raw=unbase64(value);const decrypted=await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12),additionalData:bytes('yay-vpn-v1')},await this.aes(),raw.slice(12));return JSON.parse(new TextDecoder().decode(decrypted)); }
   async seedKey() { const key=await crypto.subtle.importKey('raw',this.raw,'HKDF',false,['deriveBits']);return base64(new Uint8Array(await crypto.subtle.deriveBits({name:'HKDF',hash:'SHA-256',salt:bytes('yay-vpn-supabase-v1'),info:bytes('encrypted-preload')},key,256))); }
 }
-// Android SHA256withECDSA produces ASN.1 DER; WebCrypto expects 32-byte r || 32-byte s.
 function derToRaw(der) {
   let p=0;
   requireValue(der[p++]===0x30,'Invalid device signature',401);
@@ -56,7 +55,6 @@ async function verifyDevice(request,path,raw,publicKey) {
   } catch { throw new ApiError(401,'Device verification failed. Sign in again.'); }
   return sha(publicKey+nonce);
 }
-
 return {ApiError,requireValue,bytes,base64,unbase64,randomToken,sha,constantEqual,hashPassword,verifyPassword,Vault,derToRaw,verifyDevice};
 })();
 const requireValue=S.requireValue;
@@ -107,7 +105,6 @@ function configFor(out) {
  inbounds:[{type:'tun',tag:'tun-in',address:['172.19.0.1/30','fdfe:dcba:9876::1/126'],mtu:1400,auto_route:true,stack:'gvisor'}],outbounds:[out],
  route:{rules:[{action:'sniff'},{protocol:'dns',action:'hijack-dns'},{port:53,action:'hijack-dns'}],final:'proxy',auto_detect_interface:true,default_domain_resolver:'bootstrap'}};
 }
-
 return {importURI,configFor};
 })();
 const H=(()=>{
@@ -134,7 +131,7 @@ function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0.0.1:87
       if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
       const url=new URL(request.url);const match=url.pathname.match(/^(?:\/functions\/v1)?\/yay-api(\/.*)?$/);
       S.requireValue(match&&!url.search,'Endpoint not found',404);const path=match[1]||'/';const method=request.method;
-      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:1});
+      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:3});
       const raw=await readBody(request);if(raw.length)S.requireValue((request.headers.get('content-type')||'').split(';')[0]==='application/json','Use application/json',415);
       let data;try{data=raw.length?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw)):{};}catch{throw new S.ApiError(400,'Invalid JSON');}
       S.requireValue(data&&typeof data==='object'&&!Array.isArray(data),'Expected a JSON object');
@@ -149,8 +146,21 @@ function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0.0.1:87
         const user=await call('login_lookup',{username:name});const valid=await S.verifyPassword(password,user.password_hash||dummyHash);
         S.requireValue(user.id&&valid,'Incorrect username or password',401);
         const publicKey=string(data.public_key,1024,'device key');const nonceHash=await S.verifyDevice(request,path,raw,publicKey);
-        const resultToken=S.randomToken();const result=await call('login_finish',{user_id:user.id,verified_hash:user.password_hash,public_key:publicKey,nonce_hash:nonceHash,
-          device_name:string(data.device_name||'Android device',80,'device name'),token_hash:await S.sha(resultToken)});
+        const resultToken=S.randomToken();
+        const loginPayload={user_id:user.id,verified_hash:user.password_hash,public_key:publicKey,nonce_hash:nonceHash,
+          device_name:string(data.device_name||'Android device',80,'device name'),token_hash:await S.sha(resultToken)};
+        let result;
+        if(data.replace_device_id!==undefined) {
+          result=await call('login_replace',{...loginPayload,replace_device_id:uuid(data.replace_device_id)});
+        } else {
+          try {result=await call('login_finish',loginPayload);}
+          catch(error) {
+            if(!(error instanceof S.ApiError)||error.status!==409||!/Device limit/i.test(error.message))throw error;
+            const replacement=await call('login_replace',{user_id:user.id,verified_hash:user.password_hash});
+            if(replacement?.requires_device_replacement===true)return respond(replacement);
+            throw error;
+          }
+        }
         return respond({...result,token:resultToken});
       }
       if(path.startsWith('/v1/')) {
@@ -158,6 +168,9 @@ function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0.0.1:87
         const context=await call('user_context',{token_hash:tokenHash});const nonceHash=await S.verifyDevice(request,path,raw,context.public_key);
         const auth={token_hash:tokenHash,verified_public_key:context.public_key,nonce_hash:nonceHash};
         if(method==='GET'&&path==='/v1/bootstrap') {const result=await call('user_bootstrap',auth);return respond({...result,seed_key:await vault.seedKey()});}
+        if(method==='GET'&&path==='/v1/devices')return respond(await call('user_devices_list',auth));
+        const devicePath=path.match(/^\/v1\/devices\/([^/]+)$/);
+        if(method==='DELETE'&&devicePath)return respond(await call('user_devices_delete',{...auth,id:uuid(devicePath[1])}));
         if(method==='POST'&&path==='/v1/logout')return respond(await call('user_logout',auth));
         if(method==='POST'&&(path==='/v1/connect'||path==='/v1/heartbeat')) {
           const payload={...auth,server_id:uuid(data.server_id)};
@@ -217,7 +230,6 @@ function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0.0.1:87
     } catch(error) { return respond({error:error instanceof S.ApiError?error.message:'Backend error. Check the deployment and try again.'},error instanceof S.ApiError?error.status:500); }
   };
 }
-
 return {createHandler};
 })();
 
@@ -230,8 +242,11 @@ if (!url || !secret || !adminHash.startsWith('pbkdf2$600000$')) throw new Error(
 const rpc = async (action: string, payload: unknown) => {
   const headers: Record<string,string> = { apikey: secret, 'Content-Type': 'application/json' };
   if (secret.split('.').length === 3) headers.Authorization = 'Bearer ' + secret;
-  const response = await fetch(url + '/rest/v1/rpc/yay_rpc', {
-    method: 'POST', headers, body: JSON.stringify({ p_action: action, p_payload: payload }),
+  const replacement = action === 'login_replace';
+  const endpoint = replacement ? 'yay_login_replace' : 'yay_rpc';
+  const body = replacement ? { p_payload: payload } : { p_action: action, p_payload: payload };
+  const response = await fetch(url + '/rest/v1/rpc/' + endpoint, {
+    method: 'POST', headers, body: JSON.stringify(body),
     signal: AbortSignal.timeout(12000),
   });
   if (!response.ok) throw new Error('Database RPC unavailable');
