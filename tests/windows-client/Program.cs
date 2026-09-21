@@ -3,6 +3,11 @@ using System.Text;
 using System.Text.Json.Nodes;
 using YayVpn;
 
+if(args.Length>0&&args[0]=="--auto-fixture"){
+    var inputs=JsonNode.Parse(Console.In.ReadToEnd())!.AsArray().OfType<JsonObject>().ToArray();
+    Console.WriteLine(AutoPool.Build(inputs).ToJsonString());return;
+}
+
 static void Check(bool condition,string message){if(!condition)throw new Exception(message);}
 static async Task Until(Func<bool> condition){for(int i=0;i<100;i++){if(condition())return;await Task.Delay(30);}throw new Exception("Metric update timed out");}
 var country=new[]{"sg-1","sg-2","sg-3"};var seen=new HashSet<string>();
@@ -14,6 +19,30 @@ var pings=new Dictionary<string,long>{{"dead",-1},{"best",100},{"close",108},{"o
 for(int seed=0;seed<100;seed++){var order=ConnectionPolicy.Enhanced(pings,new Random(seed));Check(order.Count==3&&new[]{"best","close"}.Contains(order[0])&&order[2]=="outside"&&!order.Contains("dead"),"Enhanced ranking regression");}
 Check(ConnectionPolicy.Enhanced(new Dictionary<string,long>{{"dead",-1}},new Random()).Count==0,"Enhanced used unreachable server");
 Console.WriteLine("PASS: country isolation, random single selection, empty/single countries, Enhanced ranking and timeout exclusion");
+
+// Auto must diversify before taking another member from a large country.
+var autoNodes=new[]{("sg1","SG"),("sg2","SG"),("sg3","SG"),("jp1","JP"),("us1","US"),("sg1","SG")};
+for(int seed=0;seed<100;seed++){
+ var order=AutoPool.Order(autoNodes,new Random(seed));
+ Check(order.Count==5&&order.Distinct().Count()==5,"Auto omitted or duplicated a node");
+ Check(order.Take(3).Contains("jp1")&&order.Take(3).Contains("us1"),"Auto first pool was dominated by a large country");
+}
+Check(AutoPool.Order(Array.Empty<(string,string)>(),new Random()).Count==0,"Auto selected from empty list");
+JsonObject NodeConfig(string host)=>JsonNode.Parse("""
+{"dns":{"servers":[{"tag":"remote","detour":"proxy"}]},"inbounds":[{"type":"tun"}],"outbounds":[{"type":"vless","tag":"proxy","server":"HOST","server_port":443,"uuid":"test-credential"}],"route":{"final":"proxy"}}
+""".Replace("HOST",host))!.AsObject();
+var originals=new[]{NodeConfig("one.example"),NodeConfig("two.example")};string snapshot=originals[0].ToJsonString();
+var balanced=AutoPool.Build(originals);var group=balanced["outbounds"]![0]!;
+Check(group["type"]!.ToString()=="urltest"&&group["tag"]!.ToString()=="proxy"&&group["outbounds"]!.AsArray().Count==2,"Auto group missing members");
+Check(group["interrupt_exist_connections"]!.GetValue<bool>()==false&&group["interval"]!.ToString()=="30s","Auto interrupts existing connections or lost rechecks");
+Check(balanced["route"]!["final"]!.ToString()=="proxy"&&balanced["dns"]!["servers"]![0]!["detour"]!.ToString()=="proxy","Auto bypassed routing or DNS");
+Check(balanced["outbounds"]![1]!["server"]!.ToString()=="one.example"&&balanced["outbounds"]![2]!["server"]!.ToString()=="two.example","Auto corrupted server configs");
+Check(originals[0].ToJsonString()==snapshot,"Auto mutated caller-owned configuration");
+try{AutoPool.Build(Array.Empty<JsonObject>());throw new Exception("Empty Auto pool accepted");}catch(IOException){}
+try{AutoPool.Build(Enumerable.Range(0,13).Select(_=>NodeConfig("example")).ToArray());throw new Exception("Oversized pool accepted");}catch(IOException){}
+var unsafeConfig=NodeConfig("example");unsafeConfig["outbounds"]![0]!["detour"]="proxy";
+try{AutoPool.Build(new[]{unsafeConfig});throw new Exception("Recursive detour accepted");}catch(IOException){}
+Console.WriteLine("PASS: Auto country diversity, deduplication, native URLTest, stable existing connections, preserved DNS/routing and bounded pool");
 
 JsonObject Config()=>new(){["outbounds"]=new JsonArray(new JsonObject{["tag"]="proxy"}),["experimental"]=new JsonObject{["cache_file"]=new JsonObject{["enabled"]=false}}};
 var config=Config();using var monitor=new LiveTelemetry(config);
@@ -102,3 +131,4 @@ sealed class ProbeHandler(Func<System.Net.Http.HttpRequestMessage,int,Cancellati
     internal List<string> Hosts {get;}=new();
     protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request,CancellationToken ct){Hosts.Add(request.RequestUri!.Host);return respond(request,Hosts.Count,ct);}
 }
+

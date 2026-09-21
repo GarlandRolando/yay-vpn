@@ -19,7 +19,26 @@ sealed class Tunnel : IDisposable {
     internal event Action? Stopped;
     internal Tunnel(YayApi api){this.api=api;}
 
-    internal async Task Connect(string id,CancellationToken ct){
+    internal Task Connect(string id,CancellationToken ct)=>ConnectPool(new[]{id},false,ct);
+    internal Task ConnectAuto(IReadOnlyList<string> ids,CancellationToken ct)=>ConnectPool(ids,true,ct);
+    sealed record Member(string Id,int Revision,JsonObject Config,long Requested,double Lease);
+    async Task<List<Member>> Authorize(IReadOnlyList<string> ids,bool auto,CancellationToken ct){
+        using var gate=new SemaphoreSlim(4);
+        var values=await Task.WhenAll(ids.Select(async id=>{
+            await gate.WaitAsync(ct).ConfigureAwait(false);
+            try{
+                long requested=Stopwatch.GetTimestamp();
+                var grant=await api.Call("POST","/v1/connect",new(){["server_id"]=id},ct).ConfigureAwait(false);
+                return new Member(id,grant["revision"]!.GetValue<int>(),grant["config"]!.AsObject(),requested,grant["lease_seconds"]!.GetValue<double>());
+            }catch(ApiException e) when(auto&&(e.Status==404||e.Status==409)){return null;}
+            catch(Exception e) when(auto&&!ct.IsCancellationRequested&&(e is System.Net.Http.HttpRequestException||e is TaskCanceledException)){return null;}
+            finally{gate.Release();}
+        })).ConfigureAwait(false);
+        var members=values.OfType<Member>().Where(m=>m.Lease-Stopwatch.GetElapsedTime(m.Requested).TotalSeconds>(auto?10:0)).ToList();
+        if(members.Count==0)throw new IOException("Could not authorize Auto servers. Check cloud access or refresh locations.");
+        return members;
+    }
+    async Task ConnectPool(IReadOnlyList<string> ids,bool auto,CancellationToken ct){
         var attempt=new ConnectionSession();ConnectionSession? previous;
         lock(stateGate){previous=current;current=attempt;telemetry=null;healthy=false;lastError="";}
         previous?.Dispose();
@@ -29,11 +48,11 @@ sealed class Tunnel : IDisposable {
         using var timeoutRegistration=timeout.Token.Register(()=>StopAttempt(attempt,"Connection timed out. Try another country or network."));
         CancellationToken work=startup.Token;
         try{
-            work.ThrowIfCancellationRequested();long requested=Stopwatch.GetTimestamp();
-            var grant=await api.Call("POST","/v1/connect",new(){["server_id"]=id},work).ConfigureAwait(false);
             work.ThrowIfCancellationRequested();
-            int revision=grant["revision"]!.GetValue<int>();
-            var config=grant["config"]!.AsObject();
+            var members=await Authorize(ids,auto,work).ConfigureAwait(false);
+            var first=members[0];string id=first.Id;int revision=first.Revision;
+            var config=auto?AutoPool.Build(members.Select(m=>m.Config).ToList()):first.Config;
+            work.ThrowIfCancellationRequested();
             config["inbounds"]![0]!["interface_name"]="YayVPN";config["inbounds"]![0]!["strict_route"]=true;
             // Cloud traffic uses the tunnel's normal route. Only upstream core sockets bypass it.
             int port;var reservation=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);reservation.Start();port=((System.Net.IPEndPoint)reservation.LocalEndpoint).Port;reservation.Stop();
@@ -55,7 +74,7 @@ sealed class Tunnel : IDisposable {
             }
             if(!ready)throw new IOException("VPN internet check failed");
             work.ThrowIfCancellationRequested();
-            double remaining=grant["lease_seconds"]!.GetValue<double>()-Stopwatch.GetElapsedTime(requested).TotalSeconds;
+            double remaining=members.Min(m=>m.Lease-Stopwatch.GetElapsedTime(m.Requested).TotalSeconds);
             if(remaining<=0)throw new IOException("Access expired");
             lock(stateGate){
                 work.ThrowIfCancellationRequested();if(!ReferenceEquals(current,attempt))throw new OperationCanceledException(work);
@@ -63,7 +82,8 @@ sealed class Tunnel : IDisposable {
             }
             metrics.Start();
             _=Task.Run(()=>CheckHealth(attempt,check));
-            _=Task.Run(()=>Watch(attempt,engine,id,revision,remaining));
+            if(auto)_=Task.Run(()=>WatchAuto(attempt,engine,members));
+            else _=Task.Run(()=>Watch(attempt,engine,id,revision,remaining));
         }catch{
             bool cancelled=attempt.Token.IsCancellationRequested||ct.IsCancellationRequested;
             StopAttempt(attempt,LastError);
@@ -123,6 +143,43 @@ sealed class Tunnel : IDisposable {
         // Only terminal failures reach here. Temporary loss never disposes the session.
         if(!ct.IsCancellationRequested&&StopAttempt(attempt,reason))Stopped?.Invoke();
     }
+    async Task WatchAuto(ConnectionSession attempt,EngineProcess engine,List<Member> members){
+        var ct=attempt.Token;string reason="";long next=Environment.TickCount64+45000;
+        var deadlines=members.Select(m=>Environment.TickCount64+(long)((m.Lease-Stopwatch.GetElapsedTime(m.Requested).TotalSeconds)*1000)).ToArray();
+        Task? renewal=null;
+        try{while(!ct.IsCancellationRequested){
+            if(engine.HasExited){reason="VPN engine stopped unexpectedly.";break;}
+            if(deadlines.Min()<=Environment.TickCount64){reason="Auto access check expired. Reconnect when the cloud service is reachable.";break;}
+            if(renewal==null&&Environment.TickCount64>=next){
+                next=Environment.TickCount64+45000;
+                renewal=RenewAuto(members,deadlines,ct);
+            }
+            if(renewal?.IsCompleted==true){
+                try{await renewal.ConfigureAwait(false);}
+                catch(ApiException e) when(InternetProbe.TemporaryHttp(e.Status)){next=Environment.TickCount64+5000;}
+                catch(ApiException e){reason="Auto access rejected (HTTP "+e.Status+"). Refresh locations or sign in again.";break;}
+                catch(Exception) when(!ct.IsCancellationRequested){next=Environment.TickCount64+5000;}
+                renewal=null;
+            }
+            await Task.Delay(500,ct).ConfigureAwait(false);
+        }}catch(OperationCanceledException){return;}catch(ObjectDisposedException){return;}
+        finally{if(renewal!=null)_=Observe(renewal);}
+        if(!ct.IsCancellationRequested&&StopAttempt(attempt,reason))Stopped?.Invoke();
+    }
+    async Task RenewAuto(List<Member> members,long[] deadlines,CancellationToken ct){
+        using var gate=new SemaphoreSlim(4);
+        var failures=await Task.WhenAll(members.Select(async(m,i)=>{
+            await gate.WaitAsync(ct).ConfigureAwait(false);
+            try{long requested=Environment.TickCount64;
+                var grant=await api.Call("POST","/v1/heartbeat",new(){["server_id"]=m.Id,["revision"]=m.Revision},ct).ConfigureAwait(false);
+                Interlocked.Exchange(ref deadlines[i],requested+(long)(grant["lease_seconds"]!.GetValue<double>()*1000));
+                return (Exception?)null;
+            }catch(Exception e){return e;}finally{gate.Release();}
+        })).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        var failure=failures.FirstOrDefault(e=>e is ApiException a&&!InternetProbe.TemporaryHttp(a.Status))??failures.FirstOrDefault(e=>e!=null);
+        if(failure!=null)throw failure;
+    }
     static async Task Observe(Task task){try{await task.ConfigureAwait(false);}catch{}}
     bool StopAttempt(ConnectionSession attempt,string reason){
         lock(stateGate){if(!ReferenceEquals(current,attempt))return false;current=null;telemetry=null;healthy=false;lastError=reason;}
@@ -167,3 +224,4 @@ sealed class Tunnel : IDisposable {
     [DllImport("kernel32.dll",SetLastError=true)]static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
     [DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr handle);
 }
+
