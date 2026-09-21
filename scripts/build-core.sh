@@ -11,7 +11,9 @@ mkdir -p "$PROJECT_DIR/.build" "$PROJECT_DIR/android/app/libs"
 if [ ! -d "$ENGINE_DIR/.git" ]; then git clone --branch v1.12.12 --depth 1 https://github.com/SagerNet/sing-box.git "$ENGINE_DIR"; fi
 cd "$ENGINE_DIR"
 if [ "$(git rev-parse HEAD)" != "$ENGINE_COMMIT" ]; then echo 'Unexpected engine revision. Stop and inspect .build/sing-box.'; exit 1; fi
-if ! git diff --quiet || ! git diff --cached --quiet; then echo 'Engine checkout has changes. Use a clean, pinned checkout.'; exit 1; fi
+python3 "$PROJECT_DIR/scripts/apply-auto-engine.py" "$ENGINE_DIR"
+go test -race ./common/yayauto
+go test ./protocol/group
 go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.8
 go install github.com/sagernet/gomobile/cmd/gobind@v0.1.8
 GOBIN_PATH="$(go env GOPATH)/bin"
@@ -22,3 +24,4 @@ cp libbox.aar "$PROJECT_DIR/android/app/libs/libbox.aar"
 mkdir -p "$PROJECT_DIR/third-party"
 cp LICENSE "$PROJECT_DIR/third-party/sing-box-LICENSE.txt"
 printf '%s\n' 'Native engine built. Android app source can now be compiled.'
+

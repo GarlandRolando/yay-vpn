@@ -23,12 +23,13 @@ sealed class Tunnel : IDisposable {
     internal Task ConnectAuto(IReadOnlyList<string> ids,CancellationToken ct)=>ConnectPool(ids,true,ct);
     sealed record Member(string Id,int Revision,JsonObject Config,long Requested,double Lease);
     async Task<List<Member>> Authorize(IReadOnlyList<string> ids,bool auto,CancellationToken ct){
-        using var gate=new SemaphoreSlim(4);
+        using var gate=new SemaphoreSlim(AutoPool.Size);
         var values=await Task.WhenAll(ids.Select(async id=>{
             await gate.WaitAsync(ct).ConfigureAwait(false);
             try{
+                using var grantBudget=CancellationTokenSource.CreateLinkedTokenSource(ct);if(auto)grantBudget.CancelAfter(TimeSpan.FromSeconds(5));
                 long requested=Stopwatch.GetTimestamp();
-                var grant=await api.Call("POST","/v1/connect",new(){["server_id"]=id},ct).ConfigureAwait(false);
+                var grant=await api.Call("POST","/v1/connect",new(){["server_id"]=id},grantBudget.Token).ConfigureAwait(false);
                 return new Member(id,grant["revision"]!.GetValue<int>(),grant["config"]!.AsObject(),requested,grant["lease_seconds"]!.GetValue<double>());
             }catch(ApiException e) when(auto&&(e.Status==404||e.Status==409)){return null;}
             catch(Exception e) when(auto&&!ct.IsCancellationRequested&&(e is System.Net.Http.HttpRequestException||e is TaskCanceledException)){return null;}
@@ -51,7 +52,7 @@ sealed class Tunnel : IDisposable {
             work.ThrowIfCancellationRequested();
             var members=await Authorize(ids,auto,work).ConfigureAwait(false);
             var first=members[0];string id=first.Id;int revision=first.Revision;
-            var config=auto?AutoPool.Build(members.Select(m=>m.Config).ToList()):first.Config;
+            var config=auto?AutoPool.Build(members.Select(m=>m.Config).ToList(),Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"YayVPN","auto-latency.json")):first.Config;
             work.ThrowIfCancellationRequested();
             config["inbounds"]![0]!["interface_name"]="YayVPN";config["inbounds"]![0]!["strict_route"]=true;
             // Cloud traffic uses the tunnel's normal route. Only upstream core sockets bypass it.

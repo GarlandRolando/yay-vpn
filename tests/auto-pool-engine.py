@@ -1,4 +1,4 @@
-"""Native URLTest integration check using local mock SOCKS nodes only.
+"""Native Yay Auto integration check using local mock SOCKS nodes only.
 Usage: python tests/auto-pool-engine.py ENGINE DOTNET
 No credentials, external probe traffic, TUN interface or admin rights required.
 """
@@ -44,8 +44,8 @@ configs=[{'inbounds':[{'type':'http','tag':'test-in','listen':'127.0.0.1','liste
           'route':{'final':'proxy'}, 'log':{'disabled':True}} for s in servers]
 build=subprocess.run([DOTNET,'run','--project',str(ROOT/'tests/windows-client/ClientChecks.csproj'),'--','--auto-fixture'],input=json.dumps(configs),text=True,capture_output=True,check=True)
 config=json.loads(build.stdout.strip().splitlines()[-1]);config['experimental']={'clash_api':{'external_controller':f'127.0.0.1:{controller}','secret':'test-only-secret'}}
-# Keep production's 30-second interval; the test explicitly requests a new sweep on failure.
-config['outbounds'][0]['url']='http://127.0.0.1/generate_204'
+config['outbounds'][0]['test_urls']=['http://127.0.0.1/generate_204']
+slow_tag, fast_tag=[o['tag'] for o in config['outbounds'][1:]]
 def api(path):
     c=http.client.HTTPConnection('127.0.0.1',controller,timeout=5)
     try:
@@ -58,7 +58,11 @@ def until(expected):
     deadline=time.monotonic()+10
     while time.monotonic()<deadline:
         try:
-            if api('/proxies/proxy').get('now')==expected:return
+            c=http.client.HTTPConnection('127.0.0.1',inbound,timeout=2)
+            try:
+                c.request('GET','http://127.0.0.1/generate_204');r=c.getresponse();r.read()
+                if r.status==204 and api('/proxies/proxy').get('now')==expected:return
+            finally:c.close()
         except (OSError,RuntimeError):pass
         time.sleep(.1)
     raise AssertionError(f'Auto did not select {expected}')
@@ -69,11 +73,11 @@ if '--check-only' in sys.argv:
     sys.exit(0)
 process=subprocess.Popen([ENGINE,'run','-c','stdin'],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
 try:
-    process.stdin.write(json.dumps(config));process.stdin.close();until('yay-node-1')
+    process.stdin.write(json.dumps(config));process.stdin.close();until(fast_tag)
     print('PASS: native engine selected faster working proxy')
     servers[1].working=False
     api('/group/proxy/delay?url=http%3A%2F%2F127.0.0.1%2Fgenerate_204&timeout=1500')
-    until('yay-node-0')
+    until(slow_tag)
     c=http.client.HTTPConnection('127.0.0.1',inbound,timeout=3)
     c.request('GET','http://127.0.0.1/generate_204');resp=c.getresponse();assert resp.status==204;c.close()
     print('PASS: native engine failed over and new traffic used remaining working proxy')

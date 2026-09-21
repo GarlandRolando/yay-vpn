@@ -19,7 +19,7 @@ public final class YayVpnService extends VpnService {
     static volatile boolean failed=false;
     private ArrayList<String> candidates=new ArrayList<>();
     private boolean automatic;
-    private final ExecutorService grants=Executors.newFixedThreadPool(4);
+    private final ExecutorService grants=Executors.newFixedThreadPool(AutoPool.SIZE);
     private List<Member> pool=new ArrayList<>();
     private static final class Member {
         final String id;final int revision;final JSONObject config;volatile long deadline;
@@ -80,6 +80,7 @@ public final class YayVpnService extends VpnService {
         starting=worker.submit(()->startTunnel(ticket));return START_NOT_STICKY;
     }
     private void startTunnel(long ticket){
+        if(automatic){String saved=getSharedPreferences("display",0).getString("auto-pool","");candidates=new ArrayList<>(AutoPool.prefer(candidates,Arrays.asList(saved.split(","))));}
         Exception failure=null;
         for(int offset=0;offset<candidates.size();offset+=automatic?AutoPool.SIZE:1){
             String candidate=candidates.get(offset);
@@ -91,7 +92,7 @@ public final class YayVpnService extends VpnService {
                     pool=authorize(candidates.subList(offset,Math.min(candidates.size(),offset+AutoPool.SIZE)));
                     List<JSONObject> configs=new ArrayList<>();leaseDeadline=Long.MAX_VALUE;
                     for(Member m:pool){configs.add(m.config);leaseDeadline=Math.min(leaseDeadline,m.deadline);}
-                    coreConfig=AutoPool.build(configs);serverId=pool.get(0).id;revision=pool.get(0).revision;
+                    coreConfig=AutoPool.build(configs,new java.io.File(getFilesDir(),"auto-latency.json").getAbsolutePath());serverId=pool.get(0).id;revision=pool.get(0).revision;
                 }else{
                     long requestAt=SystemClock.elapsedRealtime();JSONObject grant=api.call("POST","/v1/connect",new JSONObject().put("server_id",serverId),requests,7000);
                     leaseDeadline=requestAt+grant.getLong("lease_seconds")*1000;revision=grant.getInt("revision");coreConfig=grant.getJSONObject("config");
@@ -115,6 +116,7 @@ public final class YayVpnService extends VpnService {
                     if(generation.get()!=ticket||requests.isCancelled())return;
                     state="ON";internetHealthy=true;message="VPN internet access verified.";connectedAt=SystemClock.elapsedRealtime();connectDeadline=0;
                 }
+                if(automatic){List<String> ids=new ArrayList<>();for(Member m:pool)ids.add(m.id);getSharedPreferences("display",0).edit().putString("auto-pool",android.text.TextUtils.join(",",ids)).apply();}
                 showNotification(local("Connected · ","已连接 · ","Terhubung · ")+serverName);
                 healthCheck=healthWorker.scheduleWithFixedDelay(()->checkHealth(ticket),15,15,TimeUnit.SECONDS);
                 telemetry.start();heartbeat=worker.scheduleWithFixedDelay(()->renew(ticket),45,45,TimeUnit.SECONDS);return;
@@ -136,12 +138,12 @@ public final class YayVpnService extends VpnService {
         if(vpn==null)throw new java.io.IOException("VPN network unavailable");
         // Explicit VPN network binding prevents a successful direct request being mistaken for a tunnel test.
         final Network tunnelNetwork=vpn;final RequestScope scope=requests;
-        InternetCheck.verify(url->{
+        InternetCheck.verifyHedged((url,probeScope)->{
             HttpURLConnection connection=(HttpURLConnection)tunnelNetwork.openConnection(new URL(url));
             connection.setConnectTimeout(4000);connection.setReadTimeout(4000);connection.setInstanceFollowRedirects(false);connection.setUseCaches(false);
             AutoCloseable abort=connection::disconnect;
-            try{scope.track(abort);scope.check();return connection.getResponseCode();}
-            finally{scope.untrack(abort);connection.disconnect();}
+            try{probeScope.track(abort);probeScope.check();return connection.getResponseCode();}
+            finally{probeScope.untrack(abort);connection.disconnect();}
         },scope);
     }
     private void checkHealth(long ticket){

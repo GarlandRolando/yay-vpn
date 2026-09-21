@@ -13,8 +13,11 @@ public class AutoPoolTest {
     @Test public void routingAndIsolation()throws Exception{
         JSONObject first=config("one.example"),second=config("two.example");String before=first.toString();
         JSONObject result=AutoPool.build(Arrays.asList(first,second)),group=result.getJSONArray("outbounds").getJSONObject(0);
-        assertEquals("urltest",group.getString("type"));assertEquals("proxy",group.getString("tag"));assertEquals(2,group.getJSONArray("outbounds").length());
-        assertFalse(group.getBoolean("interrupt_exist_connections"));assertEquals("30s",group.getString("interval"));
+        assertEquals("yay-auto",group.getString("type"));assertEquals("proxy",group.getString("tag"));assertEquals(2,group.getJSONArray("outbounds").length());
+        assertEquals(2,group.getJSONArray("test_urls").length());
+        assertEquals(result.getJSONArray("outbounds").getJSONObject(1).getString("tag"),AutoPool.build(Arrays.asList(second,first)).getJSONArray("outbounds").getJSONObject(2).getString("tag"));
+        assertEquals(2,AutoPool.build(Arrays.asList(first,first)).getJSONArray("outbounds").length());
+        assertEquals(Arrays.asList("c","a","b"),AutoPool.prefer(Arrays.asList("a","b","c"),Arrays.asList("revoked","c","c")));
         assertEquals("proxy",result.getJSONObject("route").getString("final"));assertEquals("proxy",result.getJSONObject("dns").getJSONArray("servers").getJSONObject(0).getString("detour"));
         assertEquals("two.example",result.getJSONArray("outbounds").getJSONObject(2).getString("server"));assertEquals(before,first.toString());
     }

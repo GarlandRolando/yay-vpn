@@ -33,8 +33,11 @@ JsonObject NodeConfig(string host)=>JsonNode.Parse("""
 """.Replace("HOST",host))!.AsObject();
 var originals=new[]{NodeConfig("one.example"),NodeConfig("two.example")};string snapshot=originals[0].ToJsonString();
 var balanced=AutoPool.Build(originals);var group=balanced["outbounds"]![0]!;
-Check(group["type"]!.ToString()=="urltest"&&group["tag"]!.ToString()=="proxy"&&group["outbounds"]!.AsArray().Count==2,"Auto group missing members");
-Check(group["interrupt_exist_connections"]!.GetValue<bool>()==false&&group["interval"]!.ToString()=="30s","Auto interrupts existing connections or lost rechecks");
+Check(group["type"]!.ToString()=="yay-auto"&&group["tag"]!.ToString()=="proxy"&&group["outbounds"]!.AsArray().Count==2,"Auto group missing members");
+Check(group["test_urls"]!.AsArray().Count==2,"Auto lost independent test URLs");
+Check(AutoPool.Build(originals.Reverse().ToArray())["outbounds"]![2]!["tag"]!.ToString()==balanced["outbounds"]![1]!["tag"]!.ToString(),"Reordering lost stable history key");
+Check(AutoPool.Build(new[]{originals[0],originals[0]})["outbounds"]!.AsArray().Count==2,"Duplicate native outbound tags");
+Check(AutoPool.Prefer(new[]{"a","b","c"},new[]{"revoked","c","c"}).SequenceEqual(new[]{"c","a","b"}),"Preferred pool resurrected absent nodes");
 Check(balanced["route"]!["final"]!.ToString()=="proxy"&&balanced["dns"]!["servers"]![0]!["detour"]!.ToString()=="proxy","Auto bypassed routing or DNS");
 Check(balanced["outbounds"]![1]!["server"]!.ToString()=="one.example"&&balanced["outbounds"]![2]!["server"]!.ToString()=="two.example","Auto corrupted server configs");
 Check(originals[0].ToJsonString()==snapshot,"Auto mutated caller-owned configuration");
@@ -42,7 +45,7 @@ try{AutoPool.Build(Array.Empty<JsonObject>());throw new Exception("Empty Auto po
 try{AutoPool.Build(Enumerable.Range(0,13).Select(_=>NodeConfig("example")).ToArray());throw new Exception("Oversized pool accepted");}catch(IOException){}
 var unsafeConfig=NodeConfig("example");unsafeConfig["outbounds"]![0]!["detour"]="proxy";
 try{AutoPool.Build(new[]{unsafeConfig});throw new Exception("Recursive detour accepted");}catch(IOException){}
-Console.WriteLine("PASS: Auto country diversity, deduplication, native URLTest, stable existing connections, preserved DNS/routing and bounded pool");
+Console.WriteLine("PASS: Auto country diversity, deduplication, native Yay Auto, stable history keys, preserved DNS/routing and bounded pool");
 
 JsonObject Config()=>new(){["outbounds"]=new JsonArray(new JsonObject{["tag"]="proxy"}),["experimental"]=new JsonObject{["cache_file"]=new JsonObject{["enabled"]=false}}};
 var config=Config();using var monitor=new LiveTelemetry(config);
@@ -103,6 +106,11 @@ using(var http=new System.Net.Http.HttpClient(handler)){
 }
 using(var handler=new ProbeHandler((request,index,ct)=>index==1?Task.FromException<System.Net.Http.HttpResponseMessage>(new TaskCanceledException("Mock per-probe timeout")):Task.FromResult(new System.Net.Http.HttpResponseMessage(HttpStatusCode.NoContent))))
 using(var http=new System.Net.Http.HttpClient(handler)){await InternetProbe.Verify(http,CancellationToken.None);Check(handler.Hosts.Count==2,"Timeout prevented fallback");}
+using(var handler=new ProbeHandler(async(request,index,ct)=>{if(index==1)await Task.Delay(Timeout.Infinite,ct);return new System.Net.Http.HttpResponseMessage(HttpStatusCode.NoContent);}))
+using(var http=new System.Net.Http.HttpClient(handler)){
+    var clock=System.Diagnostics.Stopwatch.StartNew();await InternetProbe.Verify(http,CancellationToken.None);
+    Check(clock.Elapsed<TimeSpan.FromSeconds(2),"Blocked primary prevented timely fallback");
+}
 using(var handler=new ProbeHandler((request,index,ct)=>Task.FromResult(new System.Net.Http.HttpResponseMessage(HttpStatusCode.Redirect))))
 using(var http=new System.Net.Http.HttpClient(handler)){
     try{await InternetProbe.Verify(http,CancellationToken.None);throw new Exception("Redirect accepted as successful VPN test");}catch(IOException){}

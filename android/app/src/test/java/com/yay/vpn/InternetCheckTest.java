@@ -9,6 +9,16 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class InternetCheckTest {
+    @Test public void hedgedProbeDoesNotWaitForBlockedPrimary()throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean closed=new java.util.concurrent.atomic.AtomicBoolean();
+        long start=System.nanoTime();
+        InternetCheck.verifyHedged((url,scope)->{if(url.contains("gstatic")){scope.track(()->closed.set(true));while(!closed.get())Thread.sleep(10);throw new IOException();}return 204;},new RequestScope());
+        assertTrue(closed.get());assertTrue((System.nanoTime()-start)<java.util.concurrent.TimeUnit.SECONDS.toNanos(2));
+    }
+    @Test public void hedgedCancelledSuccessIsRejected()throws Exception {
+        RequestScope parent=new RequestScope();
+        try{InternetCheck.verifyHedged((url,scope)->{parent.cancel();return 204;},parent);fail("cancelled success accepted");}catch(InterruptedIOException expected){}
+    }
     @Test public void primarySuccessNeedsOnlyOneProbe()throws Exception {
         List<String> seen=new ArrayList<>();
         InternetCheck.verify(url->{seen.add(url);return 204;},new RequestScope());assertEquals(1,seen.size());
@@ -33,3 +43,4 @@ public class InternetCheckTest {
         try{InternetCheck.verify(url->{scope.cancel();return 204;},scope);fail("Stale success accepted");}catch(InterruptedIOException expected){}
     }
 }
+

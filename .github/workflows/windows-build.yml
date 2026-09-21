@@ -30,12 +30,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Engine source download failed' }
           $revision = git -C .build/sing-box-windows rev-parse HEAD
           if ($revision -ne '54ed58499d7063136ed52dabf87d179d252425d0') { throw 'Unexpected engine revision' }
+          python scripts/apply-auto-engine.py .build/sing-box-windows
+          if ($LASTEXITCODE -ne 0) { throw 'Auto overlay verification failed' }
           $output = Join-Path $PWD 'dist/YayVPN-Windows/engine'
           New-Item -ItemType Directory -Force $output | Out-Null
           Push-Location .build/sing-box-windows
           try {
+            go test ./common/yayauto ./protocol/group
+            if ($LASTEXITCODE -ne 0) { throw 'Auto engine tests failed' }
             $env:CGO_ENABLED = '0'
-            go build -trimpath -buildvcs=false -tags 'with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_conntrack' -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.12.12 -s -w -checklinkname=0' -o "$output/sing-box.exe" ./cmd/sing-box
+            go build -trimpath -buildvcs=false -tags 'with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_conntrack' -ldflags '-X github.com/sagernet/sing-box/constant.Version=1.12.12-yay.1 -s -w -checklinkname=0' -o "$output/sing-box.exe" ./cmd/sing-box
             if ($LASTEXITCODE -ne 0) { throw 'Engine compilation failed' }
             go list -m all | Out-File -Encoding utf8 "$output/dependencies.txt"
           } finally { Pop-Location }
@@ -55,3 +59,4 @@ jobs:
           path: dist/YayVPN-Windows/
           if-no-files-found: error
           retention-days: 14
+

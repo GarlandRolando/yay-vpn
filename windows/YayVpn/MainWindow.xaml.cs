@@ -101,15 +101,17 @@ public partial class MainWindow : Window {
         if(last!=null)throw last;
     }
     async Task ConnectAutomatic(CancellationToken ct){
+        string preferredFile=Path.Combine(Path.GetDirectoryName(languageFile)!,"auto-pool.txt");
         var order=AutoPool.Order(nodes.OfType<JsonObject>().Where(n=>n["enabled"]?.ToString()!="0")
             .Select(n=>(n["id"]!.GetValue<string>(),n["location"]?.GetValue<string>()??"")),Random.Shared);
+        try{if(File.Exists(preferredFile))order=AutoPool.Prefer(order,File.ReadAllLines(preferredFile));}catch{}
         if(order.Count==0)throw new IOException("No Auto servers available. Refresh locations.");
         using var budget=CancellationTokenSource.CreateLinkedTokenSource(ct);budget.CancelAfter(120000);
         Exception? last=null;
         try{for(int i=0;i<order.Count;i+=AutoPool.Size){
             budget.Token.ThrowIfCancellationRequested();
             if(status!=null)status.Text=T("Auto: testing pool ","自动：测试组 ","Otomatis: menguji grup ")+(i/AutoPool.Size+1)+T(" · Tap to cancel"," · 点击取消"," · Ketuk untuk batal");
-            try{await tunnel.ConnectAuto(order.Skip(i).Take(AutoPool.Size).ToList(),budget.Token);return;}
+            try{var selected=order.Skip(i).Take(AutoPool.Size).ToList();await tunnel.ConnectAuto(selected,budget.Token);try{File.WriteAllLines(preferredFile,selected);}catch{}return;}
             catch(OperationCanceledException){throw;}
             catch(ApiException e) when(e.Status!=404&&e.Status!=409){throw;}
             catch(Exception e){last=e;}
