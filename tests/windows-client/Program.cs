@@ -134,9 +134,28 @@ Check(new[]{408,425,429,500,502,503,504}.All(InternetProbe.TemporaryHttp),"Tempo
 Check(new[]{400,401,403,404,409,422}.All(status=>!InternetProbe.TemporaryHttp(status)),"Access denial or configuration error was ignored");
 Console.WriteLine("PASS: independent probe fallback, probe timeouts, redirect rejection, blocked HTTP cancellation and transient/denied heartbeat classification");
 
+var loginDirect="https://database.example.com/functions/v1/yay-api";
+var loginRelay="https://login.example.com/yay-api";
+var loginRoutes=new ApiRoutes(loginDirect,loginRelay);var attemptedRoutes=new List<string>();
+Check(await loginRoutes.Call(baseUrl=>{attemptedRoutes.Add(baseUrl);return baseUrl==loginRelay?Task.FromException<string>(new HttpRequestException("offline")):Task.FromResult("ok");},e=>e is HttpRequestException)=="ok","Login failover failed");
+Check(attemptedRoutes.SequenceEqual(new[]{loginRelay,loginDirect}),"Login did not use bounded relay/direct order");attemptedRoutes.Clear();
+await loginRoutes.Call(baseUrl=>{attemptedRoutes.Add(baseUrl);return Task.FromResult("ok");},e=>true);
+Check(attemptedRoutes.SequenceEqual(new[]{loginDirect}),"Login forgot successful route");
+var rejectedRoutes=new ApiRoutes(loginDirect,loginRelay);attemptedRoutes.Clear();
+try{await rejectedRoutes.Call<string>(baseUrl=>{attemptedRoutes.Add(baseUrl);throw new IOException("wrong password");},e=>false);throw new Exception("Rejection ignored");}catch(IOException){}
+Check(attemptedRoutes.SequenceEqual(new[]{loginRelay}),"Server rejection was retried");
+var singleRoute=new ApiRoutes(loginDirect,"");attemptedRoutes.Clear();
+try{await singleRoute.Call<string>(baseUrl=>{attemptedRoutes.Add(baseUrl);throw new HttpRequestException();},e=>true);}catch(HttpRequestException){}
+Check(attemptedRoutes.SequenceEqual(new[]{loginDirect}),"Single endpoint repeated request");
+foreach(var bad in new[]{"http://login.example.com/yay-api","https://user:pass@login.example.com/yay-api","https://login.example.com/yay-api?q=1","https://login.example.com/yay-api#x","https://login.example.com:8443/yay-api","https://login.example.com/../other","https://login.example.com/%2e%2e/other","https://127.0.0.1/yay-api","https://login.example.com//yay-api"}){
+ bool rejected=false;try{new ApiRoutes(loginDirect,bad);}catch(ArgumentException){rejected=true;}Check(rejected,"Unsafe login destination accepted: "+bad);
+}
+Check(ApiRoutes.Valid(loginRelay+"/")==loginRelay,"Login URL normalization failed");
+Console.WriteLine("PASS: login relay failover, successful route preference, rejection handling and HTTPS endpoint validation");
+
+
 sealed class OnDispose(Action close):IDisposable{public void Dispose()=>close();}
 sealed class ProbeHandler(Func<System.Net.Http.HttpRequestMessage,int,CancellationToken,Task<System.Net.Http.HttpResponseMessage>> respond):System.Net.Http.HttpMessageHandler {
     internal List<string> Hosts {get;}=new();
     protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request,CancellationToken ct){Hosts.Add(request.RequestUri!.Host);return respond(request,Hosts.Count,ct);}
 }
-

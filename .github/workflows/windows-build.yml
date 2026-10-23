@@ -1,12 +1,20 @@
 name: Build Yay VPN Windows test app
 on:
   workflow_dispatch:
+    inputs:
+      api_relay_url:
+        description: 'Optional tested HTTPS relay base, e.g. https://login.example.com/yay-api'
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
 jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 45
+    env:
+      YAY_API_RELAY_URL: ${{ inputs.api_relay_url }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -18,6 +26,10 @@ jobs:
           cache: false
       - name: Check selection and live telemetry
         run: dotnet run --project tests/windows-client/ClientChecks.csproj
+      - name: Validate login relay
+        shell: pwsh
+        run: |
+          if ($env:YAY_API_RELAY_URL -and $env:YAY_API_RELAY_URL -cnotmatch '^https://[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}(?::443)?(?:/[a-zA-Z0-9_-]+)*/?$') { throw 'Invalid HTTPS relay URL' }
       - name: Compile Windows client
         shell: pwsh
         run: |
@@ -59,4 +71,5 @@ jobs:
           path: dist/YayVPN-Windows/
           if-no-files-found: error
           retention-days: 14
+
 

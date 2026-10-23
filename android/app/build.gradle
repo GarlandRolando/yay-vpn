@@ -2,6 +2,8 @@ plugins { id 'com.android.application' }
 def yay = new Properties()
 def yayFile = rootProject.file('yay.properties')
 if (yayFile.exists()) yayFile.withInputStream { yay.load(it) }
+def relayUrl = System.getenv('YAY_API_RELAY_URL') ?: yay.getProperty('API_RELAY_URL', '')
+if (!(relayUrl ==~ /^$|https:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}(?::443)?(?:\/[a-zA-Z0-9_-]+)*\/?$/)) throw new GradleException('API_RELAY_URL must be empty or a plain HTTPS domain/path, e.g. https://login.example.com/yay-api.')
 def apiUrl = System.getenv('YAY_API_URL') ?: yay.getProperty('API_BASE_URL', '')
 if (!(apiUrl ==~ /^https:\/\/[a-z0-9]{10,40}\.supabase\.co\/functions\/v1\/yay-api$/)) throw new GradleException('Run node scripts/setup.mjs or set YAY_API_URL to https://PROJECT_REF.supabase.co/functions/v1/yay-api.')
 if (!file('libs/libbox.aar').exists()) throw new GradleException('Native engine missing: run scripts/build-core.sh first. See START-HERE.md.')
@@ -12,9 +14,10 @@ android {
         applicationId 'com.yay.vpn'
         minSdk 26
         targetSdk 35
-        versionCode 11
-        versionName '1.7.0'
+        versionCode 12
+        versionName '1.8.0'
         buildConfigField 'String', 'API_BASE_URL', '"' + apiUrl + '"'
+        buildConfigField 'String', 'API_RELAY_URL', '"' + relayUrl + '"'
     }
     buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

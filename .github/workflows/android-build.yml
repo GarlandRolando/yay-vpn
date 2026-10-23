@@ -7,6 +7,11 @@ on:
         required: true
         default: 'https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api'
         type: string
+      api_relay_url:
+        description: 'Optional tested HTTPS relay base, e.g. https://login.example.com/yay-api'
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
 jobs:
@@ -15,6 +20,7 @@ jobs:
     timeout-minutes: 60
     env:
       YAY_API_URL: ${{ inputs.api_url }}
+      YAY_API_RELAY_URL: ${{ inputs.api_relay_url }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -53,3 +59,4 @@ jobs:
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/reports/lint-results-debug.html
           retention-days: 14
+

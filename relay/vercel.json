@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": null,
+  "installCommand": null,
+  "framework": null,
+  "outputDirectory": "public",
+  "rewrites": [
+    {
+      "source": "/yay-api/healthz",
+      "destination": "https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api/healthz"
+    },
+    {
+      "source": "/yay-api/v1/:path*",
+      "destination": "https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api/v1/:path*"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/yay-api/:path*",
+      "headers": [
+        {"key": "Cache-Control", "value": "no-store"},
+        {"key": "CDN-Cache-Control", "value": "no-store"},
+        {"key": "Vercel-CDN-Cache-Control", "value": "no-store"},
+        {"key": "x-vercel-enable-rewrite-caching", "value": "0"}
+      ]
+    }
+  ]
+}

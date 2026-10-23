@@ -15,6 +15,7 @@ final class Api {
     static final class Failure extends IOException {final int status;Failure(int n,String s){super(s);status=n;}}
     static final class NoNetwork extends IOException {}
     static final class UnexpectedResponse extends IOException {}
+    private final ApiRoutes routes=new ApiRoutes(BuildConfig.API_BASE_URL,BuildConfig.API_RELAY_URL);
     final SecureStore store;private final Context context;private final Activity activity;
     Api(Context context) throws Exception {this.context=context.getApplicationContext();activity=context instanceof Activity?(Activity)context:null;store=new SecureStore(context);}
     static Network physical(Context c) {
@@ -50,12 +51,19 @@ final class Api {
         return call(method,path,body,null,15000);
     }
     JSONObject call(String method,String path,JSONObject body,RequestScope scope,int timeoutMs) throws Exception {
+        return routes.call(base->callOnce(method,path,body,scope,timeoutMs,base),error->{
+            if(scope!=null&&scope.isCancelled())return false;
+            if(error instanceof Failure){int status=((Failure)error).status;return status==502||status==503||status==504;}
+            return error instanceof SocketException||error instanceof SocketTimeoutException||error instanceof UnknownHostException||error instanceof javax.net.ssl.SSLException||error instanceof EOFException;
+        });
+    }
+    private JSONObject callOnce(String method,String path,JSONObject body,RequestScope scope,int timeoutMs,String base) throws Exception {
         if(scope!=null)scope.check();
         byte[] bytes=body==null?new byte[0]:body.toString().getBytes(StandardCharsets.UTF_8);
         String timestamp=Long.toString(System.currentTimeMillis()/1000),nonce=UUID.randomUUID().toString();
         String signature=store.sign(method+"\n"+path+"\n"+timestamp+"\n"+nonce+"\n"+SecureStore.sha(bytes));
         Network network=backendNetwork();if(network==null)throw new NoNetwork();
-        HttpURLConnection conn=(HttpURLConnection)network.openConnection(new URL(BuildConfig.API_BASE_URL+path));
+        HttpURLConnection conn=(HttpURLConnection)network.openConnection(new URL(base+path));
         conn.setConnectTimeout(timeoutMs);conn.setReadTimeout(timeoutMs);conn.setInstanceFollowRedirects(false);conn.setRequestMethod(method);
         conn.setRequestProperty("Content-Type","application/json");conn.setRequestProperty("X-Yay-Time",timestamp);conn.setRequestProperty("X-Yay-Nonce",nonce);conn.setRequestProperty("X-Yay-Signature",signature);
         String token=store.get("token");if(!token.isEmpty())conn.setRequestProperty("Authorization","Bearer "+token);
@@ -119,3 +127,4 @@ final class Api {
         result.remove("seed_key");store.put("bootstrap",result.toString());return result;
     }
 }
+

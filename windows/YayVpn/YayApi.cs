@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 namespace YayVpn;
 sealed class YayApi : IDisposable {
     internal const string Base="https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api";
+    readonly ApiRoutes routes=new(Base,System.Reflection.CustomAttributeExtensions.GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>(typeof(YayApi).Assembly).FirstOrDefault(a=>a.Key=="YayApiRelayUrl")?.Value);
     // Retire pooled sockets before the next heartbeat so they follow the current VPN route.
     readonly HttpClient http=new(new SocketsHttpHandler { AllowAutoRedirect=false,UseProxy=false,PooledConnectionLifetime=TimeSpan.FromSeconds(15),ConnectTimeout=TimeSpan.FromSeconds(7) }) { Timeout=TimeSpan.FromSeconds(14) };
     readonly ECDsa key=ECDsa.Create();
@@ -20,12 +21,14 @@ sealed class YayApi : IDisposable {
     }
     static byte[] Protect(byte[] data)=>ProtectedData.Protect(data,null,DataProtectionScope.CurrentUser);
     static byte[] Unprotect(byte[] data)=>ProtectedData.Unprotect(data,null,DataProtectionScope.CurrentUser);
-    internal async Task<JsonObject> Call(string method,string path,JsonObject? data=null,CancellationToken ct=default){
+    internal Task<JsonObject> Call(string method,string path,JsonObject? data=null,CancellationToken ct=default)=>
+        routes.Call(baseUrl=>CallOnce(method,path,data,ct,baseUrl),error=>!ct.IsCancellationRequested&&(error is HttpRequestException||error is TaskCanceledException||error is ApiException a&&(a.Status==502||a.Status==503||a.Status==504)));
+    async Task<JsonObject> CallOnce(string method,string path,JsonObject? data,CancellationToken ct,string baseUrl){
         byte[] body=data==null?Array.Empty<byte>():Encoding.UTF8.GetBytes(data.ToJsonString());
         string time=DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture),nonce=Guid.NewGuid().ToString("N");
         string message=string.Join("\n",method,path,time,nonce,Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant());
         byte[] signature;lock(key){signature=key.SignData(Encoding.UTF8.GetBytes(message),HashAlgorithmName.SHA256,DSASignatureFormat.Rfc3279DerSequence);}
-        using var request=new HttpRequestMessage(new HttpMethod(method),Base+path);
+        using var request=new HttpRequestMessage(new HttpMethod(method),baseUrl+path);
         request.Headers.Add("X-Yay-Time",time);request.Headers.Add("X-Yay-Nonce",nonce);request.Headers.Add("X-Yay-Signature",Convert.ToBase64String(signature));
         if(Token.Length>0)request.Headers.Authorization=new("Bearer",Token);
         if(data!=null){request.Content=new ByteArrayContent(body);request.Content.Headers.ContentType=new("application/json");}
@@ -54,3 +57,4 @@ sealed class YayApi : IDisposable {
     public void Dispose(){key.Dispose();http.Dispose();}
 }
 sealed class ApiException(int status,string message):IOException(message){internal int Status=>status;}
+
