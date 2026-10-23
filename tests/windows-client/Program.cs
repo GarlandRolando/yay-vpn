@@ -137,13 +137,16 @@ Console.WriteLine("PASS: independent probe fallback, probe timeouts, redirect re
 var loginDirect="https://database.example.com/functions/v1/yay-api";
 var loginRelay="https://login.example.com/yay-api";
 var loginRoutes=new ApiRoutes(loginDirect,loginRelay);var attemptedRoutes=new List<string>();
-Check(await loginRoutes.Call(baseUrl=>{attemptedRoutes.Add(baseUrl);return baseUrl==loginRelay?Task.FromException<string>(new HttpRequestException("offline")):Task.FromResult("ok");},e=>e is HttpRequestException)=="ok","Login failover failed");
-Check(attemptedRoutes.SequenceEqual(new[]{loginRelay,loginDirect}),"Login did not use bounded relay/direct order");attemptedRoutes.Clear();
+Check(await loginRoutes.Call(baseUrl=>{attemptedRoutes.Add(baseUrl);return baseUrl==loginDirect?Task.FromException<string>(new HttpRequestException("offline")):Task.FromResult("ok");},e=>e is HttpRequestException)=="ok","Login failover failed");
+Check(attemptedRoutes.SequenceEqual(new[]{loginDirect,loginRelay}),"Login did not use bounded direct/relay order");attemptedRoutes.Clear();
 await loginRoutes.Call(baseUrl=>{attemptedRoutes.Add(baseUrl);return Task.FromResult("ok");},e=>true);
-Check(attemptedRoutes.SequenceEqual(new[]{loginDirect}),"Login forgot successful route");
+Check(attemptedRoutes.SequenceEqual(new[]{loginRelay}),"Login forgot successful route");
+var directRoutes=new ApiRoutes(loginDirect,loginRelay);attemptedRoutes.Clear();
+await directRoutes.Call(baseUrl=>{attemptedRoutes.Add(baseUrl);return Task.FromResult("ok");},e=>true);
+Check(attemptedRoutes.SequenceEqual(new[]{loginDirect}),"Working original backend unnecessarily waited for relay");
 var rejectedRoutes=new ApiRoutes(loginDirect,loginRelay);attemptedRoutes.Clear();
 try{await rejectedRoutes.Call<string>(baseUrl=>{attemptedRoutes.Add(baseUrl);throw new IOException("wrong password");},e=>false);throw new Exception("Rejection ignored");}catch(IOException){}
-Check(attemptedRoutes.SequenceEqual(new[]{loginRelay}),"Server rejection was retried");
+Check(attemptedRoutes.SequenceEqual(new[]{loginDirect}),"Server rejection was retried");
 var singleRoute=new ApiRoutes(loginDirect,"");attemptedRoutes.Clear();
 try{await singleRoute.Call<string>(baseUrl=>{attemptedRoutes.Add(baseUrl);throw new HttpRequestException();},e=>true);}catch(HttpRequestException){}
 Check(attemptedRoutes.SequenceEqual(new[]{loginDirect}),"Single endpoint repeated request");

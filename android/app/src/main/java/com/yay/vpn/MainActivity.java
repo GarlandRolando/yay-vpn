@@ -20,7 +20,7 @@ public final class MainActivity extends Activity {
     private static final int BG=0xff000000,CARD=0xff111317,INK=0xfff4f5f7,MUTED=0xff979da8,RED=0xfff34b59,GREEN=0xff4ce5a0;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
-    private Api api;private LatencyProbe probes;private LinearLayout root,countryPanel;private TextView stateTitle,stateHint,timer,serverLabel,progress;
+    private Api api;private LatencyProbe probes;private RequestScope loginCheck;private LinearLayout root,countryPanel;private TextView stateTitle,stateHint,timer,serverLabel,progress;
     private TextView remainingText;private long remainingAtSync,accountSyncedAt;private int devicePage;private boolean deviceBusy;
     private boolean lightning,auto;private Button autoButton,lightningButton,enhancedButton;private TextView modeHint,trafficText;
     private PowerButton power;private WorldMapView map;private Button scanButton;
@@ -40,7 +40,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onResume(){super.onResume();visible=true;handler.removeCallbacks(ticker);handler.post(ticker);if(screen.equals("home"))refresh();}
     @Override protected void onPause(){visible=false;handler.removeCallbacks(ticker);super.onPause();}
-    @Override protected void onDestroy(){handler.removeCallbacks(ticker);if(probes!=null)probes.close();io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){handler.removeCallbacks(ticker);if(loginCheck!=null)loginCheck.cancel();if(probes!=null)probes.close();io.shutdownNow();super.onDestroy();}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
     private GradientDrawable shape(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private LinearLayout column(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
@@ -55,7 +55,66 @@ public final class MainActivity extends Activity {
     private boolean hasSession(){try{return !api.store.get("token").isEmpty();}catch(Exception e){return false;}}
     private void welcome(){base("welcome");header(false,"YAY VPN");gap(root,32);FrameLayout hero=new FrameLayout(this);WorldMapView m=new WorldMapView(this);hero.addView(m,new FrameLayout.LayoutParams(-1,-1));TextView logo=text("YAY",70,INK,true);logo.setGravity(Gravity.CENTER);hero.addView(logo,new FrameLayout.LayoutParams(-1,-1));root.addView(hero,new LinearLayout.LayoutParams(-1,dp(260)));centered(root,text(t("Your world. Connected.","连接你的世界。","Duniamu. Terhubung."),28,INK,true));gap(root,12);centered(root,text(t("One account. A world of locations.","一个账号，连接全球。","Satu akun. Pilihan lokasi di seluruh dunia."),14,MUTED,false));gap(root,34);action(root,t("Log in","登录","Masuk"),true,()->login());action(root,t("Sign up","注册","Daftar"),false,()->contacts(true));action(root,"English / 中文 / Indonesia",false,()->languageDialog());}
     private EditText field(String label,boolean password){root.addView(text(label,13,MUTED,true));gap(root,8);EditText f=new EditText(this);f.setSingleLine();f.setTextSize(17);f.setTextColor(INK);f.setBackground(shape(CARD,14));f.setPadding(dp(16),0,dp(16),0);f.setInputType(InputType.TYPE_CLASS_TEXT|(password?InputType.TYPE_TEXT_VARIATION_PASSWORD:InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD));f.setAutofillHints(password?View.AUTOFILL_HINT_PASSWORD:View.AUTOFILL_HINT_USERNAME);root.addView(f,new LinearLayout.LayoutParams(-1,dp(56)));gap(root,22);return f;}
-    private void login(){base("login");header(true,"YAY VPN");root.addView(text(t("Welcome back.","欢迎回来。","Selamat datang kembali."),32,INK,true));gap(root,12);root.addView(text(t("Enter the credentials provided by your administrator.","输入管理员提供的账号和密码。","Masukkan akun yang diberikan administrator."),14,MUTED,false));gap(root,32);EditText username=field(t("Login ID","账号","ID masuk"),false),password=field(t("Password","密码","Kata sandi"),true);TextView error=text("",13,RED,false);root.addView(error);Button submit=button(t("Log in →","登录 →","Masuk →"),true);root.addView(submit,new LinearLayout.LayoutParams(-1,dp(56)));submit.setOnClickListener(v->{String u=username.getText().toString().trim(),p=password.getText().toString();if(u.isEmpty()||p.isEmpty()){error.setText(t("Enter both fields.","请填写账号和密码。","Isi kedua kolom."));return;}submit.setEnabled(false);error.setText(t("Signing in…","正在登录…","Sedang masuk…"));io.execute(()->{try{JSONObject result=api.call("POST","/v1/login",new JSONObject().put("username",u).put("password",p).put("public_key",api.store.publicKey()).put("device_name",Build.MANUFACTURER+" "+Build.MODEL));api.store.put("token",result.getString("token"));JSONObject fresh=api.refresh();runOnUiThread(()->{if(isDestroyed())return;acceptAccount(fresh.optJSONObject("account"),true);servers=fresh.optJSONArray("servers");password.setText("");home();if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},12);});}catch(Exception ex){runOnUiThread(()->{if(isDestroyed())return;error.setText(errorMessage(ex));submit.setEnabled(true);});}});});gap(root,18);action(root,t("Need an account? Sign up","没有账号？注册","Belum punya akun? Daftar"),false,()->contacts(true));}
+    private void login(){
+        base("login");header(true,"YAY VPN");final int page=devicePage;
+        root.addView(text(t("Welcome back.","欢迎回来。","Selamat datang kembali."),32,INK,true));gap(root,12);
+        root.addView(text(t("Enter the credentials provided by your administrator.","输入管理员提供的账号和密码。","Masukkan akun yang diberikan administrator."),14,MUTED,false));gap(root,32);
+        EditText username=field(t("Login ID","账号","ID masuk"),false),password=field(t("Password","密码","Kata sandi"),true);
+        TextView error=text("",13,RED,false);root.addView(error);
+        Button submit=button(t("Log in →","登录 →","Masuk →"),true);root.addView(submit,new LinearLayout.LayoutParams(-1,dp(56)));
+        gap(root,12);Button check=button(t("Check login connection","检查登录连接","Periksa koneksi masuk"),false);root.addView(check,new LinearLayout.LayoutParams(-1,dp(56)));
+        check.setOnClickListener(v->checkLoginConnection(check,submit,page));
+        submit.setOnClickListener(v->{
+            String u=username.getText().toString().trim(),p=password.getText().toString();
+            if(u.isEmpty()||p.isEmpty()){error.setText(t("Enter both fields.","请填写账号和密码。","Isi kedua kolom."));return;}
+            submit.setEnabled(false);check.setEnabled(false);error.setText(t("Signing in…","正在登录…","Sedang masuk…"));
+            io.execute(()->{
+                boolean accepted=false;
+                try{
+                    JSONObject result=api.call("POST","/v1/login",new JSONObject().put("username",u).put("password",p).put("public_key",api.store.publicKey()).put("device_name",Build.MANUFACTURER+" "+Build.MODEL));
+                    api.store.put("token",result.getString("token"));accepted=true;
+                    runOnUiThread(()->{if(!isDestroyed()&&page==devicePage)error.setText(t("Signed in. Loading locations…","已登录，正在加载节点…","Berhasil masuk. Memuat lokasi…"));});
+                    JSONObject fresh=api.refresh();
+                    runOnUiThread(()->{
+                        if(isDestroyed()||page!=devicePage)return;
+                        acceptAccount(fresh.optJSONObject("account"),true);servers=fresh.optJSONArray("servers");password.setText("");home();
+                        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},12);
+                    });
+                }catch(Exception ex){
+                    final boolean signedIn=accepted;
+                    runOnUiThread(()->{
+                        if(isDestroyed()||page!=devicePage)return;
+                        String detail=errorMessage(ex);
+                        error.setText((signedIn?t("Login accepted, but loading your account failed. ","登录成功，但账户加载失败。","Login diterima, tetapi akun gagal dimuat. "):"")+detail);
+                        submit.setEnabled(true);check.setEnabled(true);
+                    });
+                }
+            });
+        });
+        gap(root,18);action(root,t("Need an account? Sign up","没有账号？注册","Belum punya akun? Daftar"),false,()->contacts(true));
+    }
+    private void checkLoginConnection(Button check,Button submit,int page){
+        if(loginCheck!=null)loginCheck.cancel();
+        RequestScope scope=new RequestScope();loginCheck=scope;check.setEnabled(false);submit.setEnabled(false);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(t("Login connection check","登录连接检查","Pemeriksaan koneksi masuk"))
+          .setMessage(t("Checking both login addresses. No password is sent…","正在检查登录地址，不会发送密码…","Memeriksa alamat masuk. Kata sandi tidak dikirim…"))
+          .setNegativeButton(t("Cancel","取消","Batal"),(d,w)->scope.cancel()).create();
+        dialog.setOnDismissListener(d->scope.cancel());dialog.show();
+        io.execute(()->{
+            String report=api.checkLoginConnection(scope);
+            runOnUiThread(()->{
+                boolean visible=dialog.isShowing();dialog.dismiss();
+                if(isDestroyed()||page!=devicePage)return;check.setEnabled(true);submit.setEnabled(true);
+                if(!visible)return;
+                new AlertDialog.Builder(this).setTitle(t("Login connection result","登录连接结果","Hasil koneksi masuk"))
+                  .setMessage(report+"\n\n"+t("OK means this device can reach that login address. It does not test your password or VPN servers.","OK 表示此设备可访问该登录地址，此检查不验证密码或 VPN 节点。","OK berarti perangkat dapat mengakses alamat masuk tersebut. Ini tidak menguji kata sandi atau server VPN."))
+                  .setPositiveButton(t("Copy result","复制结果","Salin hasil"),(d,w)->{
+                      ((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Yay VPN connection check",report));
+                      toast(t("Result copied.","结果已复制。","Hasil disalin."));
+                  }).setNegativeButton(t("Close","关闭","Tutup"),null).show();
+            });
+        });
+    }
     private void contacts(boolean signup){base(signup?"signup":"help");header(true,t(signup?"Sign up":"Help",signup?"注册":"帮助",signup?"Daftar":"Bantuan"));root.addView(text(t(signup?"Get your Yay account.":"How can we help?",signup?"获取你的 Yay 账号。":"需要什么帮助？",signup?"Dapatkan akun Yay.":"Perlu bantuan?"),28,INK,true));gap(root,16);root.addView(text(t("Contact us using any option below. We will create your login ID and password and confirm your device limit and access period.","通过以下任一方式联系我们。我们将创建账号和密码，并确认设备数量和有效期。","Hubungi kami melalui salah satu opsi berikut. Kami akan membuat ID dan kata sandi serta mengonfirmasi batas perangkat dan masa akses."),15,MUTED,false));gap(root,28);action(root,"Weixin / 微信\nwxid_3lt1aad36ai822",false,()->{((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("Weixin ID","wxid_3lt1aad36ai822"));toast(t("Weixin ID copied. Add this ID in Weixin.","微信号已复制，请在微信中添加。","ID Weixin disalin. Tambahkan ID ini di Weixin."));});action(root,"WhatsApp\n+371 28 635 209",false,()->open("https://wa.me/37128635209"));action(root,"Email\ndummystorage22@gmail.com",false,()->open("mailto:dummystorage22@gmail.com"));gap(root,8);root.addView(text(t("Already have your credentials? Return and log in.","已有账号？返回登录。","Sudah punya akun? Kembali dan masuk."),14,MUTED,false));}
     private void open(String uri){try{startActivity(new Intent(uri.startsWith("mailto:")?Intent.ACTION_SENDTO:Intent.ACTION_VIEW,Uri.parse(uri)));}catch(ActivityNotFoundException e){toast(t("No app can open this contact. Copy the details above.","未找到可打开此联系方式的应用，请复制上方信息。","Tidak ada aplikasi untuk membuka kontak ini. Salin detail di atas."));}}
     private void settings(){choosing=false;probes.cancel();base("settings");header(true,t("Settings","设置","Pengaturan"));root.addView(text("Yay VPN "+BuildConfig.VERSION_NAME,13,MUTED,false));gap(root,12);action(root,t("Help & contact","帮助与联系","Bantuan & kontak"),false,()->contacts(false));action(root,t("Language","语言","Bahasa"),false,()->languageDialog());if(hasSession())action(root,t("Devices & limit","设备与上限","Perangkat & batas"),false,()->devices());action(root,t("Log out","退出登录","Keluar"),false,()->logout());gap(root,20);root.addView(text(t("Access until: ","有效期至：","Akses hingga: ")+expiry(),14,MUTED,false));gap(root,12);root.addView(text(t("Registered devices: ","已注册设备：","Perangkat terdaftar: ")+account.optInt("devices_used")+" / "+account.optInt("device_limit"),14,MUTED,false));gap(root,20);root.addView(text(t("Open Devices & limit to remove another device. Uninstalling alone does not free its slot.","打开设备与上限即可移除其他设备。仅卸载应用不会释放设备位。","Buka Perangkat & batas untuk menghapus perangkat lain. Menghapus aplikasi saja tidak membebaskan slot."),13,MUTED,false));}
@@ -157,7 +216,9 @@ public final class MainActivity extends Activity {
     }
     private String expiry(){return DateFormat.getDateInstance(DateFormat.MEDIUM,Locale.forLanguageTag(language)).format(new Date(account.optLong("expires_at")*1000));}
     private String errorMessage(Exception e){
+        if(e instanceof Api.GatewayFailure)return t("The login address returned an unexpected HTTP response. Tap Check login connection. HTTP ","登录地址返回了异常 HTTP 响应，请点击检查登录连接。HTTP ","Alamat masuk mengembalikan respons HTTP tidak sesuai. Ketuk Periksa koneksi masuk. HTTP ")+((Api.Failure)e).status;
         if(e instanceof Api.Failure){
+            if("Enable automatic date and time on your phone.".equals(e.getMessage()))return t("Enable automatic date and time in Android Settings, then try again.","请在 Android 设置中启用自动日期和时间，然后重试。","Aktifkan tanggal dan waktu otomatis di Pengaturan Android, lalu coba lagi.");
             int status=((Api.Failure)e).status;
             if(status==409)return t("Device limit reached. Contact support.","已达到设备上限，请联系管理员。","Batas perangkat tercapai. Hubungi admin.");
             if(status==401)return t("Incorrect credentials or expired session.","账号密码错误或登录已过期。","Akun salah atau sesi kedaluwarsa.");

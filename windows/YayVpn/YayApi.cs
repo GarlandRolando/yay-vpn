@@ -14,6 +14,7 @@ sealed class YayApi : IDisposable {
     readonly string directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"YayVPN");
     internal string Token { get; private set; }="";
     internal YayApi(){
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("YayVPN/"+typeof(YayApi).Assembly.GetName().Version+" (Windows)");
         Directory.CreateDirectory(directory);string path=Path.Combine(directory,"device.bin");
         if(File.Exists(path)){var raw=Unprotect(File.ReadAllBytes(path));try{key.ImportPkcs8PrivateKey(raw,out _);}finally{CryptographicOperations.ZeroMemory(raw);}}
         else {key.GenerateKey(ECCurve.NamedCurves.nistP256);var raw=key.ExportPkcs8PrivateKey();try{File.WriteAllBytes(path,Protect(raw));}finally{CryptographicOperations.ZeroMemory(raw);}}

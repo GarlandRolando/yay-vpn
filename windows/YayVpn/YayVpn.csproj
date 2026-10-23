@@ -2,8 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF>
     <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>YayVPN</AssemblyName><Version>1.8.0</Version><ApplicationIcon>Assets/yay.ico</ApplicationIcon><EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>YayVPN</AssemblyName><Version>1.8.1</Version><ApplicationIcon>Assets/yay.ico</ApplicationIcon><EnableWindowsTargeting>true</EnableWindowsTargeting>
     <YayApiRelayUrl Condition="'$(YayApiRelayUrl)' == ''">$(YAY_API_RELAY_URL)</YayApiRelayUrl>
+    <YayApiRelayUrl Condition="'$(YayApiRelayUrl)' == '' and '$(YayDirectOnly)' != 'true'">https://yay-vpn-login.rolandogarland.workers.dev/yay-api</YayApiRelayUrl>
   </PropertyGroup>
   <ItemGroup><PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" /></ItemGroup>
   <ItemGroup><AssemblyMetadata Include="YayApiRelayUrl" Value="$(YayApiRelayUrl)" /></ItemGroup>

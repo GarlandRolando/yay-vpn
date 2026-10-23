@@ -1,5 +1,13 @@
 name: Build Yay VPN test APK
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'engine/**'
+      - 'scripts/build-core.sh'
+      - 'scripts/apply-auto-engine.py'
+      - '.github/workflows/android-build.yml'
   workflow_dispatch:
     inputs:
       api_url:
@@ -8,9 +16,9 @@ on:
         default: 'https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api'
         type: string
       api_relay_url:
-        description: 'Optional tested HTTPS relay base, e.g. https://login.example.com/yay-api'
+        description: 'Backup login address (keep the default for Yay VPN)'
         required: false
-        default: ''
+        default: 'https://yay-vpn-login.rolandogarland.workers.dev/yay-api'
         type: string
 permissions:
   contents: read
@@ -19,8 +27,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      YAY_API_URL: ${{ inputs.api_url }}
-      YAY_API_RELAY_URL: ${{ inputs.api_relay_url }}
+      YAY_API_URL: ${{ inputs.api_url || 'https://vjcpphrhdzdywmrfndta.supabase.co/functions/v1/yay-api' }}
+      YAY_API_RELAY_URL: ${{ inputs.api_relay_url || 'https://yay-vpn-login.rolandogarland.workers.dev/yay-api' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5

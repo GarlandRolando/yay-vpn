@@ -8,7 +8,8 @@ final class ApiRoutes {
     interface Attempt<T> {T send(String base) throws Exception;}
     private final String direct,relay;
     private volatile String preferred;
-    ApiRoutes(String direct,String relay){this.direct=valid(direct);this.relay=relay==null||relay.trim().isEmpty()?"":valid(relay);preferred=this.relay.isEmpty()?this.direct:this.relay;}
+    ApiRoutes(String direct,String relay){this.direct=valid(direct);this.relay=relay==null||relay.trim().isEmpty()?"":valid(relay);preferred=this.direct;}
+    String[] endpoints(){return relay.isEmpty()||relay.equals(direct)?new String[]{direct}:new String[]{direct,relay};}
     static String valid(String value){
         try{
             String text=value.trim();URI u=new URI(text);String host=u.getHost(),path=u.getRawPath();

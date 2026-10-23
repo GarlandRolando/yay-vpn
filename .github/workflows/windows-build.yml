@@ -1,11 +1,19 @@
 name: Build Yay VPN Windows test app
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'windows/**'
+      - 'tests/windows-client/**'
+      - 'engine/**'
+      - 'scripts/apply-auto-engine.py'
+      - '.github/workflows/windows-build.yml'
   workflow_dispatch:
     inputs:
       api_relay_url:
-        description: 'Optional tested HTTPS relay base, e.g. https://login.example.com/yay-api'
+        description: 'Backup login address (keep the default for Yay VPN)'
         required: false
-        default: ''
+        default: 'https://yay-vpn-login.rolandogarland.workers.dev/yay-api'
         type: string
 permissions:
   contents: read
@@ -14,7 +22,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 45
     env:
-      YAY_API_RELAY_URL: ${{ inputs.api_relay_url }}
+      YAY_API_RELAY_URL: ${{ inputs.api_relay_url || 'https://yay-vpn-login.rolandogarland.workers.dev/yay-api' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5

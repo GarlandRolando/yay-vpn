@@ -12,7 +12,8 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class Api {
-    static final class Failure extends IOException {final int status;Failure(int n,String s){super(s);status=n;}}
+    static class Failure extends IOException {final int status;Failure(int n,String s){super(s);status=n;}}
+    static final class GatewayFailure extends Failure {GatewayFailure(int status){super(status,"The address returned a non-API response.");}}
     static final class NoNetwork extends IOException {}
     static final class UnexpectedResponse extends IOException {}
     private final ApiRoutes routes=new ApiRoutes(BuildConfig.API_BASE_URL,BuildConfig.API_RELAY_URL);
@@ -47,12 +48,25 @@ final class Api {
         ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
         return cm.getActiveNetwork();
     }
+    private HttpURLConnection openBackend(URL url) throws IOException {
+        // Before Yay starts, use Android's normal route just like the browser. Do not
+        // bind account requests to a snapshot of a Wi-Fi or third-party VPN network.
+        HttpURLConnection connection;
+        if("OFF".equals(YayVpnService.state))connection=(HttpURLConnection)url.openConnection();
+        else {
+            Network network=backendNetwork();if(network==null)throw new NoNetwork();
+            connection=(HttpURLConnection)network.openConnection(url);
+        }
+        connection.setRequestProperty("User-Agent","YayVPN/"+BuildConfig.VERSION_NAME+" (Android)");
+        return connection;
+    }
     JSONObject call(String method,String path,JSONObject body) throws Exception {
         return call(method,path,body,null,15000);
     }
     JSONObject call(String method,String path,JSONObject body,RequestScope scope,int timeoutMs) throws Exception {
         return routes.call(base->callOnce(method,path,body,scope,timeoutMs,base),error->{
             if(scope!=null&&scope.isCancelled())return false;
+            if(error instanceof GatewayFailure||error instanceof UnexpectedResponse)return true;
             if(error instanceof Failure){int status=((Failure)error).status;return status==502||status==503||status==504;}
             return error instanceof SocketException||error instanceof SocketTimeoutException||error instanceof UnknownHostException||error instanceof javax.net.ssl.SSLException||error instanceof EOFException;
         });
@@ -62,9 +76,8 @@ final class Api {
         byte[] bytes=body==null?new byte[0]:body.toString().getBytes(StandardCharsets.UTF_8);
         String timestamp=Long.toString(System.currentTimeMillis()/1000),nonce=UUID.randomUUID().toString();
         String signature=store.sign(method+"\n"+path+"\n"+timestamp+"\n"+nonce+"\n"+SecureStore.sha(bytes));
-        Network network=backendNetwork();if(network==null)throw new NoNetwork();
-        HttpURLConnection conn=(HttpURLConnection)network.openConnection(new URL(base+path));
-        conn.setConnectTimeout(timeoutMs);conn.setReadTimeout(timeoutMs);conn.setInstanceFollowRedirects(false);conn.setRequestMethod(method);
+        HttpURLConnection conn=openBackend(new URL(base+path));
+        conn.setConnectTimeout(Math.min(timeoutMs,5000));conn.setReadTimeout(timeoutMs);conn.setInstanceFollowRedirects(false);conn.setRequestMethod(method);
         conn.setRequestProperty("Content-Type","application/json");conn.setRequestProperty("X-Yay-Time",timestamp);conn.setRequestProperty("X-Yay-Nonce",nonce);conn.setRequestProperty("X-Yay-Signature",signature);
         String token=store.get("token");if(!token.isEmpty())conn.setRequestProperty("Authorization","Bearer "+token);
         AutoCloseable abort=conn::disconnect;
@@ -75,10 +88,11 @@ final class Api {
             byte[] response;try(InputStream in=stream){response=in==null?new byte[0]:readLimited(in);}
             JSONObject result;
             try{result=new JSONObject(new String(response,StandardCharsets.UTF_8));}catch(org.json.JSONException ex){
-                if(code<200||code>=300)throw new Failure(code,"The service returned an HTTP error.");
+                if(code<200||code>=300)throw new GatewayFailure(code);
                 throw new UnexpectedResponse();
             }
             if(scope!=null)scope.check();
+            if((code<200||code>=300)&&!result.has("error"))throw new GatewayFailure(code);
             if(code<200||code>=300)throw new Failure(code,result.optString("error","Could not reach the service."));
             if("POST".equals(method)&&"/v1/login".equals(path)&&result.optBoolean("requires_device_replacement")) {
                 String replacement=chooseReplacement(result.optJSONArray("devices"));
@@ -88,6 +102,50 @@ final class Api {
             }
             return result;
         }finally{if(scope!=null)scope.untrack(abort);conn.disconnect();}
+    }
+    String checkLoginConnection(RequestScope scope) {
+        String[] endpoints=routes.endpoints();
+        ExecutorService checks=Executors.newFixedThreadPool(endpoints.length);
+        List<Future<String>> pending=new ArrayList<>();
+        StringBuilder report=new StringBuilder("Yay VPN ").append(BuildConfig.VERSION_NAME)
+          .append("\nAndroid ").append(android.os.Build.VERSION.RELEASE)
+          .append("\nYay state: ").append(YayVpnService.state);
+        ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        Network active=cm.getActiveNetwork();NetworkCapabilities caps=active==null?null:cm.getNetworkCapabilities(active);
+        report.append("\nActive VPN: ").append(caps!=null&&caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
+        try {
+            for(String base:endpoints)pending.add(checks.submit(()->probeLogin(base,scope)));
+            for(int i=0;i<pending.size();i++) {
+                report.append("\n\n").append(i==0?"Direct: ":"Relay: ").append(endpoints[i]);
+                try{report.append("\n").append(pending.get(i).get(12,TimeUnit.SECONDS));}
+                catch(Exception e){report.append("\n").append(scope.isCancelled()?"CANCELLED":"TIMEOUT");}
+            }
+        }finally{scope.close();for(Future<String> task:pending)task.cancel(true);checks.shutdownNow();}
+        return report.toString();
+    }
+    private String probeLogin(String base,RequestScope scope) {
+        long started=android.os.SystemClock.elapsedRealtime();HttpURLConnection conn=null;AutoCloseable abort=null;
+        try {
+            scope.check();conn=openBackend(new URL(base+"/healthz"));
+            conn.setConnectTimeout(4000);conn.setReadTimeout(4000);conn.setInstanceFollowRedirects(false);
+            conn.setUseCaches(false);conn.setRequestMethod("GET");conn.setRequestProperty("Accept","application/json");
+            // Health checks never attach a password, bearer token or device signature.
+            final HttpURLConnection connection=conn;abort=connection::disconnect;scope.track(abort);scope.check();
+            int status=conn.getResponseCode();if(status!=200)return "HTTP "+status;
+            byte[] response;try(InputStream in=conn.getInputStream()){response=readLimited(in);}
+            JSONObject body=new JSONObject(new String(response,StandardCharsets.UTF_8));
+            if(!body.optBoolean("ok")||!"Yay VPN Supabase".equals(body.optString("service")))return "UNEXPECTED_RESPONSE";
+            return "OK · "+(android.os.SystemClock.elapsedRealtime()-started)+" ms";
+        }catch(Exception error) {
+            if(scope.isCancelled())return "CANCELLED";
+            if(error instanceof UnknownHostException)return "DNS_FAILED";
+            if(error instanceof SocketTimeoutException)return "TIMEOUT";
+            if(error instanceof javax.net.ssl.SSLException)return "TLS_FAILED";
+            if(error instanceof SocketException)return "CONNECTION_FAILED";
+            if(error instanceof NoNetwork)return "NO_NETWORK";
+            if(error instanceof org.json.JSONException)return "UNEXPECTED_RESPONSE";
+            return "REQUEST_FAILED · "+error.getClass().getSimpleName();
+        }finally{if(abort!=null)scope.untrack(abort);if(conn!=null)conn.disconnect();}
     }
     private String chooseReplacement(JSONArray devices)throws Exception {
         if(activity==null||activity.isFinishing()||devices==null||devices.length()==0)return null;
