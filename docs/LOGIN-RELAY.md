@@ -2,7 +2,19 @@
 
 The direct Supabase domain must be reachable before the VPN can start. A healthy Wi-Fi connection does not prove that particular domain is reachable. A relay provides a second HTTPS address for the same authenticated account API. It does not guarantee reachability on any particular network.
 
-## Deploy and test the relay first
+## Free-plan candidate: Cloudflare Worker
+
+Cloudflare Workers has a Free plan with 100,000 requests/day (https://developers.cloudflare.com/workers/platform/pricing/). This is an account-API relay; VPN user traffic does not pass through it. Quotas also cover bootstrap, access checks, device calls and connection grants. A free quota does not guarantee service availability or network reachability.
+
+In https://dash.cloudflare.com/, open **Workers & Pages → Create application** and import the existing GitHub repository `GarlandRolando/yay-vpn`. Choose **Worker**, name `yay-vpn-login`, production branch `main`, and root directory `relay`. The `wrangler.jsonc` in that folder selects the standalone module `cloudflare-worker.mjs`. It has no npm dependencies, database bindings, or service-role keys to configure. Leave the build command empty and use the dashboard's Worker deployment command. Dashboard labels may vary.
+
+Alternatively, for an existing basic Worker with an **Edit code** screen, replace its starter with the entire contents of `relay/cloudflare-worker.mjs` and deploy. The module has no imports.
+
+Copy the actual public Worker URL. On the affected tablet, with other VPNs off, open `https://ACTUAL-WORKER-DOMAIN/yay-api/healthz`. It must show this backend's JSON containing `ok: true` and `service: "Yay VPN Supabase"`. If that platform domain is unreachable, a tested custom domain/other host is still required; another platform name alone is not a confirmed fix.
+
+Use `https://ACTUAL-WORKER-DOMAIN/yay-api` as `api_relay_url` in both GitHub workflows after the tablet test succeeds. The client instructions below also apply to this Worker URL.
+
+## Vercel alternative: deploy and test the relay first
 
 The `relay` folder is a separate minimal Vercel project. It forwards only `/yay-api/healthz` and `/yay-api/v1/...` to this project's existing Supabase Edge Function. It does not forward the admin API and contains no database or service-role key. All request signatures, account/device checks, expiry and token checks still happen in the existing backend. It explicitly disables caching of account responses.
 
