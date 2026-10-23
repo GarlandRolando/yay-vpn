@@ -3,7 +3,7 @@ import {prepareCatalog,replaceCatalog} from '/catalog-import.mjs';
 const $=id=>document.getElementById(id);let token='',bulkEntries=null,bulkBusy=false,tab='users',users=[],servers=[],editing=null;
 // Admin token lives in memory only; reloading requires another sign-in.
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-async function api(path,method='GET',body){const r=await fetch(window.YAY_API_BASE+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:body?JSON.stringify(body):undefined});const d=await r.json();if(!r.ok){if(r.status===401&&path!='/admin/login')signout();throw Error(d.error||'Request failed');}return d;}
+async function api(path,method='GET',body){const r=await fetch(window.YAY_API_BASE+path,{signal:AbortSignal.timeout(20000),method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:body?JSON.stringify(body):undefined});const d=await r.json();if(!r.ok){if(r.status===401&&path!='/admin/login')signout();throw Error(d.error||'Request failed');}return d;}
 function notice(s){$('notice').textContent=s;$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,7000);}
 function signout(){token='';users=[];servers=[];$('login').hidden=false;$('dashboard').hidden=true;$('logout').hidden=true;$('editor').close();$('devices').close();$('bulk-dialog').close();}
 $('login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{token=(await api('/admin/login','POST',{password:$('admin-password').value})).token;$('admin-password').value='';await refresh();$('login').hidden=true;$('dashboard').hidden=false;$('logout').hidden=false;}catch(e){notice(e.message);}finally{b.disabled=false;}};
@@ -43,7 +43,7 @@ $('bulk-apply').onclick=async()=>{
     const health=await api('/healthz');if(!health.capabilities?.includes('node-json-v1'))throw Error('Deploy the updated backend first: node scripts/deploy.mjs');
     const result=await replaceCatalog(bulkEntries,api,message=>{$('bulk-summary').textContent=message+' · Keep this window open.';});
     await refresh();$('bulk-summary').textContent='Complete: '+result.added+' added, '+result.updated+' updated, '+result.paused+' old servers paused. '+result.active+' active servers verified in cloud storage. Refresh locations in the updated app. Connectivity still needs testing.';bulkEntries=null;
-  }catch(e){$('bulk-summary').textContent=e.message+' Uploads may be partially applied. Choose the same file and rerun to finish. Old entries are paused only after all replacements are saved.';}
+  }catch(e){$('bulk-summary').textContent=(e.name==='TimeoutError'?'Cloud request timed out after 20 seconds. Check your connection.':e.message)+' Uploads may be partially applied. Choose the same file and rerun to finish. Old entries are paused only after all replacements are saved.';}
   finally{bulkBusy=false;$('bulk-close').disabled=false;$('bulk-file').disabled=false;$('bulk-apply').disabled=!bulkEntries;}
 };
 window.addEventListener('beforeunload',event=>{if(bulkBusy){event.preventDefault();event.returnValue='';}});

@@ -21,6 +21,7 @@ export function prepareCatalog(document) {
 // Add/update every replacement first. Retire old options only after every write
 // succeeded and the target catalog is visible. Interrupted runs can be rerun.
 export async function replaceCatalog(entries,api,progress=()=>{}) {
+  progress('Reading current server list');
   const before=(await api('/admin/servers')).servers;
   const targets=new Map();
   for(const entry of entries){
@@ -35,6 +36,7 @@ export async function replaceCatalog(entries,api,progress=()=>{}) {
     if(old)updated++;else added++;
     progress(`Saved ${added+updated}/${entries.length}`);
   }
+  progress('Checking uploaded servers');
   const saved=(await api('/admin/servers')).servers,keep=new Set();
   for(const entry of entries){
     const matches=saved.filter(s=>s.name===entry.name);
@@ -43,7 +45,10 @@ export async function replaceCatalog(entries,api,progress=()=>{}) {
   }
   // Only retire records in the starting snapshot. Concurrent admin additions are
   // never silently removed; the final exact-catalog check reports them instead.
-  for(const old of before)if(!keep.has(old.id)&&old.enabled===1){await api('/admin/servers/'+encodeURIComponent(old.id),'PATCH',{enabled:0});paused++;}
+  const retiring=before.filter(old=>!keep.has(old.id)&&old.enabled===1);
+  progress(`Pausing old servers 0/${retiring.length}`);
+  for(const old of retiring){await api('/admin/servers/'+encodeURIComponent(old.id),'PATCH',{enabled:0});paused++;progress(`Paused old servers ${paused}/${retiring.length}`);}
+  progress('Verifying final active server list');
   const active=(await api('/admin/servers')).servers.filter(s=>s.enabled===1);
   if(active.length!==entries.length||active.some(s=>!keep.has(s.id)))throw Error('Catalog changed during import. Review the admin panel and rerun to reconcile.');
   return {added,updated,paused,active:active.length};
