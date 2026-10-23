@@ -33,6 +33,15 @@ test('Creating a server encrypts its credentials before passing data to PostgreS
  const result=await req(handler,'/admin/servers',{method:'POST',headers:{Authorization:'Bearer '+token},body:{name:'Singapore',location:'SG',uri:'trojan://SECRET-TEST-PASSWORD@example.com:443'}});
  assert.equal(result.status,200);assert.ok(saved.config_enc);assert.ok(!JSON.stringify(saved).includes('SECRET-TEST-PASSWORD'));assert.equal((await vault.open(saved.config_enc)).password,'SECRET-TEST-PASSWORD');
 });
+test('Hysteria2 JSON is encrypted and unsupported node settings never reach storage',async()=>{
+ let saved,calls=0;const handler=createHandler({rpc:async(a,p)=>{if(a==='admin_servers_create'){saved=p;calls++;}return {ok:true};},vault,adminHash});
+ const outbound={type:'hysteria2',tag:'Singapore',server:'vpn.example.com',server_port:443,password:'test-secret',tls:{enabled:true},obfs:{type:'salamander',password:'test-obfs'}};
+ const headers={Authorization:'Bearer '+token};
+ const result=await req(handler,'/admin/servers',{method:'POST',headers,body:{outbound,location:'Singapore'}});
+ assert.equal(result.status,200);assert.equal(saved.protocol,'hysteria2');assert.equal(saved.name,'Singapore');assert.ok(!JSON.stringify(saved).includes('test-secret'));assert.deepEqual(await vault.open(saved.config_enc),{...outbound,tag:'proxy'});
+ assert.equal((await req(handler,'/admin/servers',{method:'POST',headers,body:{outbound:{...outbound,detour:'direct'}}})).status,400);assert.equal(calls,1);
+ assert.equal((await req(handler,'/admin/servers',{method:'POST',body:{outbound}})).status,401);
+});
 test('Device login translates Android signatures and handles SQL device-limit rejection',async()=>{
  const pair=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),publicKey=S.base64(pair.publicKey.export({type:'spki',format:'der'}));
  const userHash=await S.hashPassword('User-password-2026');let finish;
@@ -65,3 +74,4 @@ test('User device routes authenticate signed paths and validate target IDs',asyn
  const before=calls.length;assert.equal((await signed('DELETE','/v1/devices/not-a-uuid')).status,400);assert.equal(calls.length,before+1);
  assert.equal((await req(handler,'/v1/devices')).status,401);
 });
+

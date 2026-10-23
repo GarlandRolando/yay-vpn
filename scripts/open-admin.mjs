@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 let config;try{config=JSON.parse(await readFile(resolve(root,'.yay-local.json'),'utf8'));}catch{console.error('Run node scripts/setup.mjs first.');process.exit(1);}
 if(!/^https:\/\/[a-z0-9]{10,40}\.supabase\.co\/functions\/v1\/yay-api$/.test(config.api_url))throw Error('Invalid API URL');
-const files=new Map([['/','index.html'],['/app.js','app.js'],['/style.css','style.css']]);
+const files=new Map([['/','index.html'],['/app.js','app.js'],['/style.css','style.css'],['/catalog-import.mjs','../scripts/catalog-import.mjs'],['/supabase/functions/yay-api/profiles.mjs','../supabase/functions/yay-api/profiles.mjs'],['/supabase/functions/yay-api/security.mjs','../supabase/functions/yay-api/security.mjs']]);
 const server=createServer(async(req,res)=>{
   const host=req.headers.host;
   if(!['127.0.0.1:8788','localhost:8788'].includes(host)||req.method!=='GET'){res.writeHead(403);res.end('Forbidden');return;}
@@ -18,3 +18,4 @@ const server=createServer(async(req,res)=>{
 });
 server.on('error',e=>{console.error(e.code==='EADDRINUSE'?'Port 8788 is already in use. Close the other admin launcher first.':e.message);process.exit(1);});
 server.listen(8788,'127.0.0.1',()=>console.log('Open http://127.0.0.1:8788 in your browser.\nThe admin screen runs here; accounts and servers remain in Supabase.\nKeep this terminal open while using the admin screen. Ctrl+C closes the screen server only.'));
+

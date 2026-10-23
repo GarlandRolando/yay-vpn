@@ -23,7 +23,7 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
       if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
       const url=new URL(request.url);const match=url.pathname.match(/^(?:\/functions\/v1)?\/yay-api(\/.*)?$/);
       S.requireValue(match&&!url.search,'Endpoint not found',404);const path=match[1]||'/';const method=request.method;
-      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:3});
+      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:4,capabilities:['node-json-v1','hysteria2']});
       const raw=await readBody(request);if(raw.length)S.requireValue((request.headers.get('content-type')||'').split(';')[0]==='application/json','Use application/json',415);
       let data;try{data=raw.length?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw)):{};}catch{throw new S.ApiError(400,'Invalid JSON');}
       S.requireValue(data&&typeof data==='object'&&!Array.isArray(data),'Expected a JSON object');
@@ -104,8 +104,9 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
           if(data.name!==undefined){payload.name=string(data.name,80,'server name').trim();S.requireValue(payload.name,'Server name required');}
           if(data.location!==undefined)payload.location=string(data.location,80,'location');
           if(data.enabled!==undefined)payload.enabled=int(data.enabled,0,1,'Enabled');
-          if(data.uri) {
-            let imported;try{imported=P.importURI(data.uri);}catch(e){throw new S.ApiError(400,e instanceof S.ApiError?e.message:'Invalid server link');}
+          S.requireValue(!(data.uri&&data.outbound!==undefined),'Supply either a link or a node object');
+          if(data.uri||data.outbound!==undefined) {
+            let imported;try{imported=data.outbound!==undefined?P.importOutbound(data.outbound):P.importURI(data.uri);}catch(e){throw new S.ApiError(400,e instanceof S.ApiError?e.message:'Invalid server configuration');}
             payload.config_enc=await vault.seal(imported.outbound);payload.protocol=imported.outbound.type;payload.name??=imported.name.slice(0,80);
           }
           if(method==='POST'){S.requireValue(payload.config_enc,'Server link required');payload.location??='';}
@@ -122,3 +123,4 @@ export function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0
     } catch(error) { return respond({error:error instanceof S.ApiError?error.message:'Backend error. Check the deployment and try again.'},error instanceof S.ApiError?error.status:500); }
   };
 }
+

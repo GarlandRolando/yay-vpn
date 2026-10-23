@@ -25,7 +25,8 @@ final class CountryCatalog {
     }
     static String code(String raw){
         String s=raw.toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "");
-        String[][] names={{"SG","singapore"},{"HK","hongkong"},{"JP","japan"},{"IN","india"},{"ZA","southafrica"},{"KR","southkorea"},{"US","unitedstates"},{"GB","unitedkingdom"},{"AU","australia"},{"DE","germany"},{"ES","spain"},{"BR","brazil"},{"ID","indonesia"},{"CN","china"},{"NL","netherlands"},{"FR","france"},{"CA","canada"},{"TW","taiwan"},{"TH","thailand"},{"MY","malaysia"}};
+        String[][] names={{"SG","singapore"},{"HK","hongkong"},{"JP","japan"},{"IN","india"},{"ZA","southafrica"},{"KR","southkorea"},{"US","unitedstates"},{"GB","unitedkingdom"},{"AU","australia"},{"DE","germany"},{"ES","spain"},{"BR","brazil"},{"ID","indonesia"},{"CN","china"},{"NL","netherlands"},{"FR","france"},{"PL","poland"},{"BE","belgium"},{"CH","switzerland"},{"CA","canada"},{"TW","taiwan"},{"TH","thailand"},{"MY","malaysia"}};
         for(String[] n:names)if(s.equals(n[0].toLowerCase(Locale.ROOT))||s.contains(n[1]))return n[0];return "";
     }
 }
+

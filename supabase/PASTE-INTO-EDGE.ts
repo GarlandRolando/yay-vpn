@@ -28,6 +28,7 @@ class Vault {
   async open(value) { const raw=unbase64(value);const decrypted=await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12),additionalData:bytes('yay-vpn-v1')},await this.aes(),raw.slice(12));return JSON.parse(new TextDecoder().decode(decrypted)); }
   async seedKey() { const key=await crypto.subtle.importKey('raw',this.raw,'HKDF',false,['deriveBits']);return base64(new Uint8Array(await crypto.subtle.deriveBits({name:'HKDF',hash:'SHA-256',salt:bytes('yay-vpn-supabase-v1'),info:bytes('encrypted-preload')},key,256))); }
 }
+// Android SHA256withECDSA produces ASN.1 DER; WebCrypto expects 32-byte r || 32-byte s.
 function derToRaw(der) {
   let p=0;
   requireValue(der[p++]===0x30,'Invalid device signature',401);
@@ -55,6 +56,8 @@ async function verifyDevice(request,path,raw,publicKey) {
   } catch { throw new ApiError(401,'Device verification failed. Sign in again.'); }
   return sha(publicKey+nonce);
 }
+
+
 return {ApiError,requireValue,bytes,base64,unbase64,randomToken,sha,constantEqual,hashPassword,verifyPassword,Vault,derToRaw,verifyDevice};
 })();
 const requireValue=S.requireValue;
@@ -63,6 +66,15 @@ function decode(value) { return new TextDecoder().decode(Uint8Array.from(atob(va
 function validUUID(value) { requireValue(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value),'Server UUID is invalid');return value.toLowerCase(); }
 function importURI(uri) {
   requireValue(typeof uri==='string'&&uri.length<=20000,'Invalid server link');uri=uri.trim();let out,q,name;
+  if (/^(hysteria2|hy2):\/\//i.test(uri)) {
+    const u=new URL(uri),p=Object.fromEntries(u.searchParams);
+    requireValue(Object.keys(p).every(k=>['sni','insecure','obfs','obfs-password'].includes(k)),'Unsupported Hysteria2 link option; use the original sing-box JSON for ECH settings');
+    requireValue(['0','false','',undefined].includes(p.insecure),'TLS certificate verification must stay enabled');
+    const node={type:'hysteria2',tag:decodeURIComponent(u.hash.slice(1))||'Server',server:u.hostname.replace(/^\[|\]$/g,''),server_port:Number(u.port||443),password:decodeURIComponent(u.username)+(u.password?':'+decodeURIComponent(u.password):''),tls:{enabled:true}};
+    if(p.sni)node.tls.server_name=p.sni;
+    if(p.obfs||p['obfs-password'])node.obfs={type:p.obfs,password:p['obfs-password']};
+    return importOutbound(node);
+  }
   if(uri.startsWith('vmess://')) {
     const v=JSON.parse(decode(uri.slice(8)));requireValue(['none','',undefined].includes(v.type),'Unsupported VMess header');
     out={type:'vmess',server:v.add,server_port:Number(v.port),uuid:validUUID(v.id),security:v.scy||'auto',alter_id:Number(v.aid||0)};
@@ -100,12 +112,55 @@ function importURI(uri) {
   return {outbound:validateOutbound(out),name};
 }
 function validateOutbound(out) {requireValue(typeof out.server==='string'&&out.server.trim().length>0,'Server host is missing');requireValue(Number.isInteger(out.server_port)&&out.server_port>0&&out.server_port<=65535,'Server port is invalid');out.tag='proxy';return out;}
+
+// Accept node objects, never whole routing configs or file paths. Preserve provider TLS
+// settings; do not guess an SNI or disable certificate verification to force a connection.
+function importOutbound(value) {
+  function keys(obj,allowed,label) {
+    requireValue(obj&&typeof obj==='object'&&!Array.isArray(obj),`Invalid ${label}`);
+    requireValue(Object.keys(obj).every(k=>allowed.includes(k)),`Unsupported ${label} option`);
+  }
+  function str(s,label,max=4096) {requireValue(typeof s==='string'&&s.length>0&&s.length<=max,`Invalid ${label}`);}
+  function strings(a,label){requireValue(Array.isArray(a)&&a.length>0&&a.length<=32,`Invalid ${label}`);for(const s of a)str(s,label);}
+  keys(value,['type','tag','server','server_port','uuid','flow','packet_encoding','password','obfs','tls','transport'],'node');
+  requireValue(['vless','hysteria2'].includes(value.type),'JSON imports support VLESS and Hysteria2 nodes');
+  const out=JSON.parse(JSON.stringify(value)),name=out.tag||'Server';str(name,'name',80);str(out.server,'server',253);
+  requireValue(!/[\s/@?#]/.test(out.server),'Invalid server host');
+  const tls=out.tls;
+  keys(tls,['enabled','server_name','insecure','alpn','utls','reality','ech'],'TLS');
+  requireValue(tls.enabled===true,'TLS must be enabled');
+  requireValue(tls.insecure===undefined||tls.insecure===false,'TLS certificate verification must stay enabled');
+  if(tls.server_name!==undefined)str(tls.server_name,'TLS server name',253);
+  if(tls.alpn!==undefined)strings(tls.alpn,'ALPN');
+  if(tls.utls!==undefined){keys(tls.utls,['enabled','fingerprint'],'uTLS');requireValue(typeof tls.utls.enabled==='boolean','Invalid uTLS enabled');str(tls.utls.fingerprint,'fingerprint',64);}
+  if(tls.reality!==undefined){keys(tls.reality,['enabled','public_key','short_id'],'REALITY');requireValue(tls.reality.enabled===true,'Invalid REALITY enabled');requireValue(typeof tls.reality.public_key==='string'&&/^[A-Za-z0-9_-]{43}$/.test(tls.reality.public_key),'Invalid REALITY public key');requireValue(tls.reality.short_id===undefined||typeof tls.reality.short_id==='string'&&/^(?:[0-9a-fA-F]{2}){0,8}$/.test(tls.reality.short_id),'Invalid REALITY short ID');}
+  if(tls.ech!==undefined){keys(tls.ech,['enabled','config'],'ECH');requireValue(typeof tls.ech.enabled==='boolean','Invalid ECH enabled');if(tls.ech.config!==undefined)strings(tls.ech.config,'ECH config');}
+  if(out.type==='vless') {
+    requireValue(out.password===undefined&&out.obfs===undefined,'Hysteria2 options on a VLESS node');
+    out.uuid=validUUID(out.uuid);
+    requireValue(out.flow===undefined||out.flow===''||out.flow==='xtls-rprx-vision','Unsupported VLESS flow');
+    requireValue(out.packet_encoding===undefined||['','xudp','packetaddr'].includes(out.packet_encoding),'Unsupported packet encoding');
+    if(out.transport!==undefined){const t=out.transport;keys(t,['type','path','headers','service_name'],'transport');
+      requireValue(['ws','grpc'].includes(t.type),'Supported JSON transports: WebSocket and gRPC; omit transport for TCP');
+      if(t.type==='ws'){requireValue(t.service_name===undefined,'gRPC option on WebSocket');if(t.path!==undefined)str(t.path,'WebSocket path');if(t.headers!==undefined){keys(t.headers,['Host'],'WebSocket headers');str(t.headers.Host,'WebSocket host',253);}}
+      else {requireValue(t.path===undefined&&t.headers===undefined,'WebSocket option on gRPC');if(t.service_name!==undefined)str(t.service_name,'gRPC service');}
+    }
+  } else {
+    requireValue(['uuid','flow','packet_encoding','transport'].every(k=>out[k]===undefined),'VLESS options on a Hysteria2 node');
+    requireValue(tls.reality===undefined&&tls.utls===undefined,'REALITY/uTLS are not supported for Hysteria2 QUIC');
+    str(out.password,'Hysteria2 password');
+    if(out.obfs!==undefined){keys(out.obfs,['type','password'],'obfuscation');requireValue(out.obfs.type==='salamander','Unsupported Hysteria2 obfuscation');str(out.obfs.password,'obfuscation password');}
+  }
+  return {name,outbound:validateOutbound(out)};
+}
 function configFor(out) {
  return {log:{disabled:true},dns:{servers:[{type:'udp',tag:'bootstrap',server:'1.1.1.1'},{type:'https',tag:'remote',server:'1.1.1.1',server_port:443,path:'/dns-query',tls:{enabled:true,server_name:'cloudflare-dns.com'},detour:'proxy'}],final:'remote',strategy:'ipv4_only'},
  inbounds:[{type:'tun',tag:'tun-in',address:['172.19.0.1/30','fdfe:dcba:9876::1/126'],mtu:1400,auto_route:true,stack:'gvisor'}],outbounds:[out],
  route:{rules:[{action:'sniff'},{protocol:'dns',action:'hijack-dns'},{port:53,action:'hijack-dns'}],final:'proxy',auto_detect_interface:true,default_domain_resolver:'bootstrap'}};
 }
-return {importURI,configFor};
+
+
+return {importURI,importOutbound,configFor};
 })();
 const H=(()=>{
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -131,7 +186,7 @@ function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0.0.1:87
       if(request.method==='OPTIONS')return new Response(null,{status:204,headers});
       const url=new URL(request.url);const match=url.pathname.match(/^(?:\/functions\/v1)?\/yay-api(\/.*)?$/);
       S.requireValue(match&&!url.search,'Endpoint not found',404);const path=match[1]||'/';const method=request.method;
-      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:3});
+      if(method==='GET'&&(path==='/'||path==='/healthz'))return respond({ok:true,service:'Yay VPN Supabase',version:4,capabilities:['node-json-v1','hysteria2']});
       const raw=await readBody(request);if(raw.length)S.requireValue((request.headers.get('content-type')||'').split(';')[0]==='application/json','Use application/json',415);
       let data;try{data=raw.length?JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw)):{};}catch{throw new S.ApiError(400,'Invalid JSON');}
       S.requireValue(data&&typeof data==='object'&&!Array.isArray(data),'Expected a JSON object');
@@ -212,8 +267,9 @@ function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0.0.1:87
           if(data.name!==undefined){payload.name=string(data.name,80,'server name').trim();S.requireValue(payload.name,'Server name required');}
           if(data.location!==undefined)payload.location=string(data.location,80,'location');
           if(data.enabled!==undefined)payload.enabled=int(data.enabled,0,1,'Enabled');
-          if(data.uri) {
-            let imported;try{imported=P.importURI(data.uri);}catch(e){throw new S.ApiError(400,e instanceof S.ApiError?e.message:'Invalid server link');}
+          S.requireValue(!(data.uri&&data.outbound!==undefined),'Supply either a link or a node object');
+          if(data.uri||data.outbound!==undefined) {
+            let imported;try{imported=data.outbound!==undefined?P.importOutbound(data.outbound):P.importURI(data.uri);}catch(e){throw new S.ApiError(400,e instanceof S.ApiError?e.message:'Invalid server configuration');}
             payload.config_enc=await vault.seal(imported.outbound);payload.protocol=imported.outbound.type;payload.name??=imported.name.slice(0,80);
           }
           if(method==='POST'){S.requireValue(payload.config_enc,'Server link required');payload.location??='';}
@@ -230,6 +286,8 @@ function createHandler({rpc,vault,adminHash,allowedOrigins=['http://127.0.0.1:87
     } catch(error) { return respond({error:error instanceof S.ApiError?error.message:'Backend error. Check the deployment and try again.'},error instanceof S.ApiError?error.status:500); }
   };
 }
+
+
 return {createHandler};
 })();
 
@@ -253,3 +311,4 @@ const rpc = async (action: string, payload: unknown) => {
   return await response.json();
 };
 Deno.serve(H.createHandler({rpc, vault, adminHash}));
+

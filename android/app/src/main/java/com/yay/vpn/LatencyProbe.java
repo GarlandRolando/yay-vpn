@@ -35,10 +35,14 @@ final class LatencyProbe {
     List<String> ranked(CountryCatalog.Country country){
         Map<String,Long> measured=new LinkedHashMap<>();
         for(JSONObject n:country.nodes){Result r=fresh(n);if(r!=null)measured.put(n.optString("id"),r.millis);}
-        return SelectionPolicy.rank(measured,new java.security.SecureRandom());
+        List<String> ranked=SelectionPolicy.rank(measured,new java.security.SecureRandom());
+        List<String> quic=new ArrayList<>();for(JSONObject n:country.nodes)if("hysteria2".equals(n.optString("protocol")))quic.add(n.optString("id"));
+        Collections.shuffle(quic,new java.security.SecureRandom());ranked.addAll(Math.min(1,ranked.size()),quic);return ranked;
     }
 
-    void scan(List<JSONObject> nodes,Listener listener,long budgetMs){
+    void scan(List<JSONObject> inputNodes,Listener listener,long budgetMs){
+        // QUIC has no TCP listener requirement. A TCP failure says nothing about Hy2.
+        final List<JSONObject> nodes=new ArrayList<>();for(JSONObject n:inputNodes)if(!"hysteria2".equals(n.optString("protocol")))nodes.add(n);
         cancel();int ticket=generation.get();active=new RequestScope();final RequestScope scope=active;running=true;AtomicInteger done=new AtomicInteger();AtomicBoolean denied=new AtomicBoolean();
         if(nodes.isEmpty()){running=false;listener.complete();return;}
         Runnable finish=()->{if(ticket!=generation.get())return;cancel();if(denied.get())listener.unauthorized();else listener.complete();};
@@ -67,3 +71,4 @@ final class LatencyProbe {
     void cancel(){generation.incrementAndGet();running=false;pool.getQueue().clear();if(deadline!=null){main.removeCallbacks(deadline);deadline=null;}RequestScope old=active;old.cancel();if(!closer.isShutdown())closer.execute(old::close);}
     void close(){cancel();pool.shutdownNow();closer.shutdown();results.clear();}
 }
+

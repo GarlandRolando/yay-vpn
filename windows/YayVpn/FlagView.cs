@@ -14,6 +14,10 @@ sealed class FlagView : FrameworkElement {
         Rect(Brushes.White,0,0,1,1);
         switch(Code){
         case "SG":Rect(Brushes.Crimson,0,0,1,.5);Dot(Brushes.White,.2,.25,.18);Dot(Brushes.Crimson,.24,.22,.15);for(int i=0;i<5;i++){double a=-Math.PI/2+i*2*Math.PI/5;Star(.39+Math.Cos(a)*.065,.25+Math.Sin(a)*.1,.035,Brushes.White);}break;
+        case "PL":Rect(Brushes.Crimson,0,.5,1,.5);break;
+        case "FR":Rect(Brushes.Navy,0,0,1.0/3,1);Rect(Brushes.Crimson,2.0/3,0,1.0/3,1);break;
+        case "BE":Rect(Brushes.Black,0,0,1.0/3,1);Rect(Brushes.Gold,1.0/3,0,1.0/3,1);Rect(Brushes.Crimson,2.0/3,0,1.0/3,1);break;
+        case "CH":Rect(Brushes.Red,0,0,1,1);Rect(Brushes.White,.42,.18,.16,.64);Rect(Brushes.White,.26,.39,.48,.22);break;
         case "JP":Dot(Brushes.Crimson,.5,.5,.29);break;
         case "DE":Rect(Brushes.Black,0,0,1,1.0/3);Rect(Brushes.Crimson,0,1.0/3,1,1.0/3);Rect(Brushes.Gold,0,2.0/3,1,1.0/3);break;
         case "ES":Rect(Brushes.Crimson,0,0,1,.25);Rect(Brushes.Gold,0,.25,1,.5);Rect(Brushes.Crimson,0,.75,1,.25);Rect(Brushes.Crimson,.28,.4,.08,.23);break;
@@ -29,3 +33,4 @@ sealed class FlagView : FrameworkElement {
         d.Pop();
     }
 }
+

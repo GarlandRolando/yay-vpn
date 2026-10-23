@@ -31,3 +31,7 @@ apple/*.xcodeproj/
 *.p12
 
 build-logs/
+
+# Private provider catalog used by the bulk importer
+/new-servers.json
+
