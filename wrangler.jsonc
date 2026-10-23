@@ -1,0 +1,6 @@
+{
+  "name": "yay-vpn-login",
+  "main": "relay/cloudflare-worker.mjs",
+  "compatibility_date": "2026-10-23",
+  "workers_dev": true
+}
